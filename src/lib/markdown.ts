@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { marked } from 'marked';
 import { nameToEmoji } from 'gemoji';
 import { getHighlighterInstance } from './syntax-highlighter.js';
@@ -89,4 +90,54 @@ export function escapeHtml(text: string): string {
 export function truncateText(text: string, maxLength: number): string {
   if (text.length <= maxLength) return text;
   return text.substring(0, maxLength - 3) + '...';
+}
+
+// MIME types for image extensions that can be inlined as data: URIs
+const IMG_MIME: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.svg': 'image/svg+xml',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+};
+
+// Inline relative <img src> values as base64 data: URIs. `fetchImage` returns
+// the raw bytes for a repo-relative path (or null to leave the <img> as-is).
+// Absolute (http://, https://, //) and existing data: URLs are untouched.
+export async function inlineRelativeImages(
+  html: string,
+  baseDir: string,
+  fetchImage: (repoPath: string) => Promise<Buffer | null>
+): Promise<string> {
+  const re = /<img\b[^>]*\bsrc="([^"]*)"[^>]*>/gi;
+
+  const relPaths = new Set<string>();
+  for (const m of html.matchAll(re)) {
+    const src = m[1];
+    if (/^(https?:)?\/\//i.test(src) || /^data:/i.test(src)) continue;
+    relPaths.add(src);
+  }
+
+  // Resolve + fetch each unique relative path once, in parallel.
+  const dataUris = new Map<string, string>();
+  await Promise.all(
+    [...relPaths].map(async (src) => {
+      const repoPath = path.posix
+        .normalize(path.posix.join(baseDir, src))
+        .replace(/^(\.\.\/)+/, '');
+      const mime = IMG_MIME[path.posix.extname(repoPath).toLowerCase()];
+      if (!mime) return;
+      const buf = await fetchImage(repoPath);
+      if (!buf) return;
+      dataUris.set(src, `data:${mime};base64,${buf.toString('base64')}`);
+    })
+  );
+
+  return html.replace(re, (tag, src) => {
+    const uri = dataUris.get(src);
+    return uri ? tag.replace(`src="${src}"`, `src="${uri}"`) : tag;
+  });
 }

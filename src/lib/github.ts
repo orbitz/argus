@@ -720,6 +720,27 @@ export async function fetchFileContent(
   return response.data as unknown as string;
 }
 
+// Fetch raw file bytes at a specific ref (binary-safe). Returns null if the
+// path is not a fetchable file (e.g. too large, missing, a directory).
+export async function fetchFileBuffer(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  path: string,
+  ref: string
+): Promise<Buffer | null> {
+  try {
+    const response = await octokit.repos.getContent({ owner, repo, path, ref });
+    const data = response.data as { content?: string; encoding?: string };
+    if (data.content && data.encoding === 'base64') {
+      return Buffer.from(data.content, 'base64');
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export async function mergePR(
   octokit: Octokit,
   owner: string,
