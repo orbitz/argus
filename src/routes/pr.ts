@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
 import {
@@ -20,11 +21,12 @@ import {
   fetchPRTimeline,
   mergePR,
   fetchFileContent,
+  fetchFileBuffer,
 } from '../lib/github.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
 import { renderFile, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug } from '../lib/diff-renderer.js';
-import { renderMarkdown } from '../lib/markdown.js';
+import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
 import { computeMergeBase, computeRangeDiff, computeCrossDiff, computeCrossRevisionDiff, getFullFileDiff } from '../lib/git.js';
@@ -878,6 +880,13 @@ export async function prRoutes(fastify: FastifyInstance) {
         } else {
           html = await renderMarkdown(content);
         }
+
+        // Inline relative images as data: URIs so they resolve against the
+        // repo (relative <img src> would otherwise resolve against this route).
+        const baseDir = path.posix.dirname(filePath);
+        html = await inlineRelativeImages(html, baseDir, (repoPath) =>
+          fetchFileBuffer(octokit, owner, repo, repoPath, pr.head.sha)
+        );
 
         return reply.send({ html: `<div class="rendered-preview markdown-body">${html}</div>` });
       } catch (err: any) {

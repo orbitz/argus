@@ -269,6 +269,7 @@ export async function renderFile(
              data-path="${escapeHtml(path)}"
              data-file-sha="${escapeHtml(fileSha)}"
              ${isReviewed ? 'checked' : ''}
+             autocomplete="off"
              title="Mark as reviewed">
       <label for="file-reviewed-${fileId}">Reviewed</label>
     </span>
