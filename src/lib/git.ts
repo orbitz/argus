@@ -143,13 +143,13 @@ export async function ensureRepo(owner: string, repo: string, token: string): Pr
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // If repo doesn't exist, create it
+  // If repo doesn't exist, create it as an empty bare repo.
+  // Refs are fetched on demand (shallow) by fetchRefs to avoid pulling full history.
   if (!existsSync(repoPath)) {
-    const authUrl = buildAuthUrl(owner, repo, token);
     try {
-      await execGit(['clone', '--bare', authUrl, repoPath], parentDir, token);
+      await execGit(['init', '--bare', repoPath], parentDir);
     } catch (err: any) {
-      throw new Error(`Failed to clone repository: ${sanitizeError(err.message, token)}`);
+      throw new Error(`Failed to initialize repository: ${sanitizeError(err.message, token)}`);
     }
   }
 }
