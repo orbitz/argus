@@ -26,6 +26,7 @@
     "gemoji": "^8.1.0",
     "github-markdown-css": "^5.8.1",
     "marked": "^14.1.0",
+    "pino": "^9.0.0",
     "shiki": "^3.21.0"
   },
   "devDependencies": {
