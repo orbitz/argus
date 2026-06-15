@@ -34,6 +34,14 @@ export const config = {
     pollIntervalMs: 45000,
   },
 
+  // Diff rendering
+  diff: {
+    // When a PR changes more than this many files, the Files view renders lightweight
+    // file shells and loads each file's diff body lazily on expand (keeps very large
+    // PRs responsive). Below the threshold, all diffs render eagerly as before.
+    lazyFileThreshold: parseInt(optional('LAZY_DIFF_FILE_THRESHOLD', '75'), 10),
+  },
+
   // Git operations
   git: {
     cacheDir: optional('GIT_CACHE_DIR', '/tmp/argus-git-cache'),

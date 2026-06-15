@@ -115,6 +115,12 @@ a.file-deep-link:hover { text-decoration: underline; }
 .comment-form-close { color: #cc0000; margin-left: 1rem; }
 .inline-comment-form-js { display: table-row; }
 
+/* Lazy diff body placeholder (very large PRs) */
+.diff-lazy-placeholder,
+.diff-lazy-error { padding: 0.75rem 1rem; color: #656d76; font-size: 0.85rem; }
+.diff-lazy-error { color: #cf222e; }
+.diff-lazy-error .lazy-retry { margin-left: 0.5rem; }
+
 /* Comments */
 .comments-list { margin-top: 0.5rem; }
 .comment, .review { margin-bottom: 0.75rem; padding: 0.5rem; background: #f9f9f9; border: 1px solid #eee; }

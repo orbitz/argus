@@ -83,41 +83,11 @@ async function renderLine(
       <td class="diff-line-num diff-line-num-new">${newNum}</td>
       <td class="diff-line-action">${commentBtn}</td>
       <td class="diff-line-content"><span class="diff-line-prefix">${prefix}</span>${contentHtml}</td>
-    </tr>
-    ${commentLine ? renderInlineCommentFormRow(formId, path, commentLine, commentSide, headSha, owner, repo, prNumber) : ''}`;
-}
-
-// Render inline comment form row (hidden by default, shown via CSS :target)
-function renderInlineCommentFormRow(
-  formId: string,
-  path: string,
-  line: number,
-  side: string,
-  headSha: string,
-  owner: string,
-  repo: string,
-  prNumber: number
-): string {
-  return `
-    <tr class="inline-comment-form-row" id="${formId}">
-      <td colspan="4">
-        <form class="inline-comment-form" method="POST" action="/pr/${owner}/${repo}/${prNumber}/inline-comment">
-          <input type="hidden" name="path" value="${escapeHtml(path)}">
-          <input type="hidden" name="line" value="${line}">
-          <input type="hidden" name="side" value="${side}">
-          <input type="hidden" name="commit_id" value="${headSha}">
-          <div class="comment-form-header">
-            <span class="comment-form-file">${escapeHtml(path)}:${line}</span>
-            <a href="#f${path.replace(/[^a-zA-Z0-9]/g, '-')}-close" class="comment-form-close">&times;</a>
-          </div>
-          <textarea name="body" placeholder="Leave a comment..." rows="3" required class="comment-textarea"></textarea>
-          <div class="comment-form-actions">
-            <a href="#" class="btn btn-secondary btn-small">Cancel</a>
-            <button type="submit" class="btn btn-primary btn-small">Comment</button>
-          </div>
-        </form>
-      </td>
     </tr>`;
+  // Note: the inline comment form is no longer rendered per-line. It is built on demand
+  // in the client from the #inline-comment-form-template (see renderInlineCommentForm and
+  // public/js/pr.js). This removes one <form>/<textarea> per commentable line — the single
+  // largest source of DOM bloat on very large diffs.
 }
 
 // Render a hunk header
@@ -177,6 +147,123 @@ function injectOrphanedCommentHunks(
   return merged;
 }
 
+const STATUS_BADGES: Record<string, { class: string; text: string }> = {
+  added: { class: 'badge-added', text: 'A' },
+  deleted: { class: 'badge-deleted', text: 'D' },
+  modified: { class: 'badge-modified', text: 'M' },
+  renamed: { class: 'badge-renamed', text: 'R' },
+};
+
+// Build the <details> opening-tag attributes and <summary> for a normal (non-binary,
+// non-empty) file. Shared by renderFile (eager) and renderFileShell (lazy) so both produce
+// a byte-identical header — the sidebar, go-to-file modal, review toggles and progress bar
+// all key off these attributes.
+function buildNormalFileChrome(
+  file: DiffFile,
+  fileId: string,
+  isReviewed: boolean,
+  enableHighlighting: boolean,
+  fileSha: string,
+  headSha: string
+): { attrs: string; summary: string } {
+  const path = file.newPath || file.oldPath;
+  const filename = path.split('/').pop() || path;
+  const directory = path.substring(0, path.length - filename.length);
+
+  const statsHtml = `<span class="file-stat additions">+${file.additions}</span>
+       <span class="file-stat deletions">-${file.deletions}</span>`;
+
+  const badge = STATUS_BADGES[file.status] || STATUS_BADGES.modified;
+  const language = detectLanguage(path);
+
+  const syntaxToggle = language ? `
+    <span class="syntax-checkbox">
+      <input type="checkbox"
+             id="syntax-${fileId}"
+             class="syntax-toggle"
+             data-file-id="${fileId}"
+             title="Toggle syntax highlighting"
+             ${enableHighlighting ? 'checked' : ''}>
+      <label for="syntax-${fileId}">Syntax</label>
+    </span>
+  ` : '';
+
+  const fullFileCheckbox = `
+    <span class="full-file-checkbox">
+      <input type="checkbox"
+             id="full-file-${fileId}"
+             class="full-file-toggle"
+             data-path="${escapeHtml(path)}"
+             title="Show full file with diff context">
+      <label for="full-file-${fileId}">Full file</label>
+    </span>
+  `;
+
+  const isRenderable = /\.(md|adoc)$/i.test(path);
+  const renderedCheckbox = isRenderable ? `
+    <span class="rendered-checkbox">
+      <input type="checkbox"
+             id="rendered-${fileId}"
+             class="rendered-toggle"
+             data-path="${escapeHtml(path)}"
+             title="Show rendered preview">
+      <label for="rendered-${fileId}">Rendered</label>
+    </span>
+  ` : '';
+
+  const reviewCheckbox = `
+    <span class="file-review-checkbox">
+      <input type="checkbox"
+             id="file-reviewed-${fileId}"
+             class="file-reviewed-toggle"
+             data-path="${escapeHtml(path)}"
+             data-file-sha="${escapeHtml(fileSha)}"
+             ${isReviewed ? 'checked' : ''}
+             autocomplete="off"
+             title="Mark as reviewed">
+      <label for="file-reviewed-${fileId}">Reviewed</label>
+    </span>
+  `;
+
+  const attrs = `class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-sha="${headSha}" data-additions="${file.additions}" data-deletions="${file.deletions}"`;
+
+  const summary = `
+      <summary class="file-header" id="file-${fileId}">
+        <span class="file-header-info">
+          <span class="status-badge ${badge.class}">${badge.text}</span>
+          <a class="file-path file-deep-link" href="#file-${fileId}" onclick="event.stopPropagation()" style="text-decoration: none; color: inherit;">
+            <span class="file-directory">${escapeHtml(directory)}</span>
+            <span class="file-name">${escapeHtml(filename)}</span>
+          </a>
+        </span>
+        <span class="file-stats">${statsHtml}${syntaxToggle}${fullFileCheckbox}${renderedCheckbox}${reviewCheckbox}</span>
+      </summary>`;
+
+  return { attrs, summary };
+}
+
+// Render a lazy "shell" for a normal file: identical <details>/<summary> chrome as renderFile,
+// but with an empty placeholder body and data-lazy="1". The diff body is fetched on demand
+// (when the <details> is opened) from the /file-diff endpoint. Always rendered collapsed.
+export function renderFileShell(
+  file: DiffFile,
+  fileId: string,
+  headSha: string,
+  isReviewed: boolean = false,
+  enableHighlighting: boolean = false,
+  fileSha: string = ''
+): string {
+  const { attrs, summary } = buildNormalFileChrome(
+    file, fileId, isReviewed, enableHighlighting, fileSha, headSha
+  );
+  return `
+    <details ${attrs} data-lazy="1">${summary}
+      <div class="diff-content">
+        <div class="diff-lazy-placeholder">Loading diff…</div>
+      </div>
+    </details>`;
+}
+
 // Render a file diff
 export async function renderFile(
   file: DiffFile,
@@ -211,18 +298,12 @@ export async function renderFile(
        <span class="file-stat deletions">-${file.deletions}</span>`;
 
   // Status badge
-  const statusBadges: Record<string, { class: string; text: string }> = {
-    added: { class: 'badge-added', text: 'A' },
-    deleted: { class: 'badge-deleted', text: 'D' },
-    modified: { class: 'badge-modified', text: 'M' },
-    renamed: { class: 'badge-renamed', text: 'R' },
-  };
-  const badge = statusBadges[file.status] || statusBadges.modified;
+  const badge = STATUS_BADGES[file.status] || STATUS_BADGES.modified;
 
   // Detect language for syntax highlighting
   const language = detectLanguage(path);
 
-  // Syntax toggle checkbox
+  // Syntax toggle checkbox (binary/empty files only show this toggle in their header)
   const syntaxToggle = language ? `
     <span class="syntax-checkbox">
       <input type="checkbox"
@@ -232,31 +313,6 @@ export async function renderFile(
              title="Toggle syntax highlighting"
              ${enableHighlighting ? 'checked' : ''}>
       <label for="syntax-${fileId}">Syntax</label>
-    </span>
-  ` : '';
-
-  // Full file toggle checkbox
-  const fullFileCheckbox = `
-    <span class="full-file-checkbox">
-      <input type="checkbox"
-             id="full-file-${fileId}"
-             class="full-file-toggle"
-             data-path="${escapeHtml(path)}"
-             title="Show full file with diff context">
-      <label for="full-file-${fileId}">Full file</label>
-    </span>
-  `;
-
-  // Rendered preview checkbox for markdown/asciidoc files
-  const isRenderable = /\.(md|adoc)$/i.test(path);
-  const renderedCheckbox = isRenderable ? `
-    <span class="rendered-checkbox">
-      <input type="checkbox"
-             id="rendered-${fileId}"
-             class="rendered-toggle"
-             data-path="${escapeHtml(path)}"
-             title="Show rendered preview">
-      <label for="rendered-${fileId}">Rendered</label>
     </span>
   ` : '';
 
@@ -350,18 +406,11 @@ export async function renderFile(
     }
   }
 
+  const { attrs, summary } = buildNormalFileChrome(
+    file, fileId, isReviewed, enableHighlighting, fileSha, headSha
+  );
   return `
-    <details class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-sha="${headSha}" data-additions="${file.additions}" data-deletions="${file.deletions}" ${isReviewed ? '' : 'open'}>
-      <summary class="file-header" id="file-${fileId}">
-        <span class="file-header-info">
-          <span class="status-badge ${badge.class}">${badge.text}</span>
-          <a class="file-path file-deep-link" href="#file-${fileId}" onclick="event.stopPropagation()" style="text-decoration: none; color: inherit;">
-            <span class="file-directory">${escapeHtml(directory)}</span>
-            <span class="file-name">${escapeHtml(filename)}</span>
-          </a>
-        </span>
-        <span class="file-stats">${statsHtml}${syntaxToggle}${fullFileCheckbox}${renderedCheckbox}${reviewCheckbox}</span>
-      </summary>
+    <details ${attrs} ${isReviewed ? '' : 'open'}>${summary}
       <div class="diff-content">
         <table class="diff-table">
           <tbody>
