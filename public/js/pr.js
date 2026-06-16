@@ -994,7 +994,8 @@
       els.forEach(el => {
         const path = el.dataset.path;
         const fileId = el.dataset.fileId;
-        if (path && fileId) files.push({ path, fileId, el });
+        const reviewed = el.classList.contains('file-reviewed');
+        if (path && fileId) files.push({ path, fileId, el, reviewed });
       });
       return files;
     }
@@ -1021,13 +1022,18 @@
         const li = document.createElement('li');
         li.className = 'goto-file-result' + (i === selectedIndex ? ' selected' : '');
         const lastSlash = file.path.lastIndexOf('/');
+        let nameHtml;
         if (lastSlash >= 0) {
           const dir = file.path.substring(0, lastSlash + 1);
           const name = file.path.substring(lastSlash + 1);
-          li.innerHTML = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
+          nameHtml = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
         } else {
-          li.textContent = file.path;
+          nameHtml = escapeHtml(file.path);
         }
+        const icon = file.reviewed
+          ? '<span class="goto-file-status reviewed" title="Reviewed">✓</span>'
+          : '<span class="goto-file-status" title="Not reviewed">○</span>';
+        li.innerHTML = '<span class="goto-file-name">' + nameHtml + '</span>' + icon;
         li.addEventListener('click', () => navigateToFile(file));
         resultsList.appendChild(li);
       });

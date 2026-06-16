@@ -481,6 +481,34 @@ a.file-deep-link:hover { text-decoration: underline; }
   cursor: pointer;
   font-size: 0.9rem;
   font-family: 'SF Mono', Consolas, monospace;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.goto-file-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.goto-file-status {
+  flex-shrink: 0;
+  color: #999;
+}
+
+.goto-file-status.reviewed {
+  color: #1a7f37;
+}
+
+.goto-file-result.selected .goto-file-status {
+  color: rgba(255, 255, 255, 0.7);
+}
+
+.goto-file-result.selected .goto-file-status.reviewed {
+  color: #fff;
 }
 
 .goto-file-result:hover {
