@@ -45,6 +45,11 @@ export const config = {
   // Git operations
   git: {
     cacheDir: optional('GIT_CACHE_DIR', '/tmp/argus-git-cache'),
+    // Diff-only operations (git diff A B) only need the trees at each commit,
+    // so a depth-1 fetch is enough.
+    shallowDepth: 1,
+    // Starting depth for history-dependent ops (merge-base); deepened on demand.
+    mergeBaseDepth: 50,
     fetchDepth: 200,
     fetchDeepDepth: 500,
     commandTimeout: 60000,
