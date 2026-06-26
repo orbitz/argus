@@ -72,6 +72,7 @@
 
     .dashboard-controls { display: flex; align-items: center; gap: 1rem; }
     .show-mine-toggle { color: #666; font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; white-space: nowrap; }
+    .approval-filter select { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; }
     /* Hide the current user's own PRs by default; revealed when the toggle is on. */
     .dashboard:not(.show-mine) .pr-item.pr-own { display: none; }
 
@@ -123,6 +124,13 @@
         <label class="show-mine-toggle">
           <input type="checkbox" id="show-mine"> Show my PRs
         </label>
+        <label class="approval-filter">
+          <select id="approval-filter">
+            <option value="all">All</option>
+            <option value="approved">Only approved</option>
+            <option value="unapproved">Only unapproved</option>
+          </select>
+        </label>
         <span class="dashboard-stats"><%= totalPRs %> PRs across <%= reposWithPRs.length %> repos</span>
       </div>
     </div>
@@ -130,7 +138,7 @@
     <% if (reposWithPRs.length === 0) { %>
       <p class="empty-state">No open pull requests found in your recent repositories.</p>
     <% } %>
-    <p class="empty-state hidden" id="filtered-empty">No pull requests to show. Tick "Show my PRs" to include your own.</p>
+    <p class="empty-state hidden" id="filtered-empty">No pull requests match the current filters.</p>
 
     <% reposWithPRs.forEach(repo => { %>
       <section class="repo-section">
@@ -140,7 +148,7 @@
         </div>
         <ul class="pr-list">
           <% repo.pulls.forEach(pr => { %>
-            <li class="pr-item<%= user && pr.author === user.login ? ' pr-own' : '' %>">
+            <li class="pr-item<%= user && pr.author === user.login ? ' pr-own' : '' %><%= pr.approved ? ' is-approved' : '' %>">
               <span class="pr-number">#<%= pr.number %></span>
               <span class="pr-link">
                 <a href="/pr/<%= repo.owner %>/<%= repo.name %>/<%= pr.number %>" class="pr-title"><%= pr.title %></a>
@@ -168,6 +176,7 @@
     const sections = document.querySelectorAll('.repo-section');
     const dashboard = document.querySelector('.dashboard');
     const showMine = document.getElementById('show-mine');
+    const approvalFilter = document.getElementById('approval-filter');
     const statsEl = document.querySelector('.dashboard-stats');
     const filteredEmpty = document.getElementById('filtered-empty');
     const ghUrlRe = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
@@ -187,6 +196,7 @@
     function applyFilters() {
       const q = input.value.trim().toLowerCase();
       const mine = showMine.checked;
+      const approval = approvalFilter.value; // 'all' | 'approved' | 'unapproved'
       dashboard.classList.toggle('show-mine', mine);
 
       let visiblePRs = 0;
@@ -199,10 +209,15 @@
         items.forEach(item => {
           const title = item.querySelector('.pr-title').textContent.toLowerCase();
           const matchesSearch = !q || title.includes(q);
-          item.classList.toggle('hidden', !matchesSearch);
-          // Own PRs are hidden via CSS unless `mine`; account for that in counts.
           const own = item.classList.contains('pr-own');
-          if (matchesSearch && (mine || !own)) visibleCount++;
+          const approved = item.classList.contains('is-approved');
+          const matchesApproval =
+            approval === 'all' ||
+            (approval === 'approved' && approved) ||
+            (approval === 'unapproved' && !approved);
+          const visible = matchesSearch && (mine || !own) && matchesApproval;
+          item.classList.toggle('hidden', !visible);
+          if (visible) visibleCount++;
         });
 
         section.classList.toggle('hidden', visibleCount === 0);
@@ -219,6 +234,7 @@
     }
 
     showMine.addEventListener('change', applyFilters);
+    approvalFilter.addEventListener('change', applyFilters);
 
     input.addEventListener('input', () => {
       const q = input.value.trim().toLowerCase();
