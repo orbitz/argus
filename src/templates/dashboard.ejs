@@ -41,6 +41,26 @@
     .pr-draft { color: #886600; font-size: 0.8rem; }
     .pr-meta { color: #888; font-size: 0.85rem; white-space: nowrap; }
 
+    .pr-approved {
+      color: #1a7f37;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    .pr-review-progress {
+      color: #666;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+    }
+    .pr-review-progress.complete {
+      color: #1a7f37;
+      border-color: #1a7f37;
+      background: #eaf6ec;
+    }
+
     .empty-state { color: #666; text-align: center; padding: 3rem; }
     .nav-links { display: flex; gap: 1rem; }
 
@@ -115,6 +135,14 @@
                 <a href="/pr/<%= repo.owner %>/<%= repo.name %>/<%= pr.number %>" class="pr-title"><%= pr.title %></a>
                 <% if (pr.draft) { %><span class="pr-draft">(draft)</span><% } %>
               </span>
+              <% if (pr.approved) { %>
+                <span class="pr-approved" title="You approved this PR">✓ Approved</span>
+              <% } %>
+              <% if (pr.totalFiles > 0) {
+                   const allReviewed = pr.reviewedCount >= pr.totalFiles; %>
+                <span class="pr-review-progress <%= allReviewed ? 'complete' : '' %>"
+                      title="You have reviewed <%= pr.reviewedCount %> of <%= pr.totalFiles %> files"><%= pr.reviewedCount %>/<%= pr.totalFiles %> reviewed</span>
+              <% } %>
               <span class="pr-meta"><%= pr.author %></span>
             </li>
           <% }) %>
