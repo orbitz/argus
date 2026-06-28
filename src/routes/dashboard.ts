@@ -3,17 +3,18 @@ import { requireAuth } from '../middleware/auth.js';
 import { createUserOctokit, fetchPRFiles, fetchReviews } from '../lib/github.js';
 import { getReviewedFiles } from '../lib/file-reviews.js';
 
-// Determine whether the given user's most recent decisive review approved the PR.
+// Determine the set of users whose most recent decisive review approved the PR.
 // Ignores COMMENTED/PENDING reviews, which don't change approval state.
-function userHasApproved(reviews: any[], login: string): boolean {
-  let approved = false;
+function getApprovers(reviews: any[]): string[] {
+  const approved = new Map<string, boolean>();
   for (const review of reviews) {
-    if (review.user?.login !== login) continue;
+    const login = review.user?.login;
+    if (!login) continue;
     const state = review.state;
-    if (state === 'APPROVED') approved = true;
-    else if (state === 'CHANGES_REQUESTED' || state === 'DISMISSED') approved = false;
+    if (state === 'APPROVED') approved.set(login, true);
+    else if (state === 'CHANGES_REQUESTED' || state === 'DISMISSED') approved.set(login, false);
   }
-  return approved;
+  return [...approved.entries()].filter(([, ok]) => ok).map(([login]) => login);
 }
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
@@ -44,6 +45,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
           reviewedCount: number;
           totalFiles: number;
           approved: boolean;
+          otherApprovers: string[];
         }>;
       }> = [];
 
@@ -66,13 +68,16 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
 
           const reviewedCount = getReviewedFiles(userId, owner, repo, prNumber, fileShaMap).length;
 
+          const approvers = getApprovers(reviews);
+
           return {
             reviewedCount,
             totalFiles: files.length,
-            approved: userHasApproved(reviews, login),
+            approved: approvers.includes(login),
+            otherApprovers: approvers.filter((l) => l !== login),
           };
         } catch {
-          return { reviewedCount: 0, totalFiles: 0, approved: false };
+          return { reviewedCount: 0, totalFiles: 0, approved: false, otherApprovers: [] };
         }
       };
 

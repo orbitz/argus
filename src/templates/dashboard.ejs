@@ -47,6 +47,15 @@
       font-weight: 600;
       white-space: nowrap;
     }
+    /* Others' approvals: distinct from your own (lighter, outlined, not bold). */
+    .pr-approved-others {
+      color: #57606a;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid #cdd5dd;
+      border-radius: 999px;
+    }
     .pr-review-progress {
       color: #666;
       font-size: 0.8rem;
@@ -155,7 +164,14 @@
                 <% if (pr.draft) { %><span class="pr-draft">(draft)</span><% } %>
               </span>
               <% if (pr.approved) { %>
-                <span class="pr-approved" title="You approved this PR">✓ Approved</span>
+                <span class="pr-approved" title="You approved this PR">✓ Approved by you</span>
+              <% } %>
+              <% if (pr.otherApprovers && pr.otherApprovers.length > 0) {
+                   const others = pr.otherApprovers;
+                   const label = others.length === 1
+                     ? others[0]
+                     : others[0] + ' +' + (others.length - 1); %>
+                <span class="pr-approved-others" title="Approved by <%= others.join(', ') %>">✓ <%= label %></span>
               <% } %>
               <% if (pr.totalFiles > 0) {
                    const allReviewed = pr.reviewedCount >= pr.totalFiles; %>
