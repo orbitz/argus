@@ -38,6 +38,137 @@
   const diffContainer = document.getElementById('diff-container');
   const pollIntervalTextEl = document.getElementById('poll-interval-text');
 
+  // ---- Lazy diff bodies (very large PRs) ----------------------------------------------
+  // On large PRs the server renders file "shells" (<details data-lazy="1"> with an empty
+  // placeholder body). The body is fetched on demand when the file is expanded, and can be
+  // discarded again to free memory (collapse, Collapse All, or marking the file reviewed).
+  // A file whose body is present has no `.diff-lazy-placeholder` child; that is what we key
+  // load/discard decisions off, so it composes cleanly with the full-file/rendered toggles.
+
+  const LAZY_PLACEHOLDER_HTML = '<div class="diff-lazy-placeholder">Loading diff…</div>';
+  const lazyLoads = new Map(); // fileEl -> in-flight Promise (dedupes concurrent loads)
+
+  // Fetch and inject a lazy file's diff body. Resolves once loaded (or immediately if the
+  // body is already present / the file is not lazy). Never fetches the same file twice at once.
+  function loadFileBody(fileEl) {
+    if (!fileEl || !fileEl.hasAttribute('data-lazy')) return Promise.resolve();
+    if (lazyLoads.has(fileEl)) return lazyLoads.get(fileEl);
+    const diffContent = fileEl.querySelector(':scope > .diff-content');
+    if (!diffContent || !diffContent.querySelector('.diff-lazy-placeholder')) {
+      return Promise.resolve(); // already loaded
+    }
+    const path = fileEl.dataset.path;
+    if (!path) return Promise.resolve();
+
+    const p = (async () => {
+      try {
+        const url = `/pr/${config.owner}/${config.repo}/${config.prNumber}/file-diff?path=${encodeURIComponent(path)}`;
+        const response = await fetch(url);
+        if (!response.ok) throw new Error('Server returned ' + response.status);
+        const data = await response.json();
+        diffContent.innerHTML = data.html;
+      } catch (err) {
+        console.error('Failed to load file diff:', err);
+        diffContent.innerHTML = '<div class="diff-lazy-error">Failed to load diff. '
+          + '<button type="button" class="lazy-retry btn btn-small">Retry</button></div>';
+      } finally {
+        lazyLoads.delete(fileEl);
+      }
+    })();
+    lazyLoads.set(fileEl, p);
+    return p;
+  }
+
+  // Drop a lazy file's body back to the placeholder to free memory. No-op for non-lazy files,
+  // files already collapsed to a shell, or files with an open inline comment draft.
+  function discardFileBody(fileEl) {
+    if (!fileEl || !fileEl.hasAttribute('data-lazy')) return;
+    const diffContent = fileEl.querySelector(':scope > .diff-content');
+    if (!diffContent) return;
+    if (diffContent.querySelector('.diff-lazy-placeholder')) return; // already a shell
+    if (fileEl.querySelector('.inline-comment-form-row')) return; // unsent draft open
+    diffContent.innerHTML = LAZY_PLACEHOLDER_HTML;
+  }
+
+  // Wire up lazy loading: fetch a file's body the first time its <details> opens. The toggle
+  // event does not bubble, so we listen in the capture phase on the container.
+  function setupLazyDiffs() {
+    if (!diffContainer) return;
+
+    diffContainer.addEventListener('toggle', (e) => {
+      const fileEl = e.target;
+      if (fileEl.classList && fileEl.classList.contains('diff-file') && fileEl.open) {
+        loadFileBody(fileEl);
+      }
+    }, true);
+
+    // Retry button inside a failed placeholder.
+    diffContainer.addEventListener('click', (e) => {
+      const retry = e.target.closest('.lazy-retry');
+      if (!retry) return;
+      const fileEl = retry.closest('.diff-file');
+      if (!fileEl) return;
+      const diffContent = fileEl.querySelector(':scope > .diff-content');
+      if (diffContent) diffContent.innerHTML = LAZY_PLACEHOLDER_HTML;
+      loadFileBody(fileEl);
+    });
+
+    // Seamless deep linking: resolve #file-/#comment- hashes on navigation, loading the
+    // target's lazy file body if needed. The on-load case is handled in setupFileDeepLinks.
+    window.addEventListener('hashchange', () => {
+      const hash = window.location.hash;
+      if (hash.startsWith('#file-') || hash.startsWith('#comment-')) {
+        revealHashTarget(hash);
+      }
+    });
+  }
+
+  // Open a file (and its parent directories), which triggers a lazy load via the toggle
+  // listener if the body isn't present yet.
+  function expandFileChain(fileEl) {
+    fileEl.open = true;
+    let parent = fileEl.parentElement && fileEl.parentElement.closest('details.diff-directory');
+    while (parent) {
+      parent.open = true;
+      parent = parent.parentElement && parent.parentElement.closest('details.diff-directory');
+    }
+  }
+
+  function scrollToHash(hash) {
+    const el = document.querySelector(hash);
+    if (el) {
+      requestAnimationFrame(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
+  }
+
+  // Expand and scroll to whatever a #file-/#comment- hash points at, loading the containing
+  // lazy file first when necessary. For a #comment-<id> whose file body isn't loaded, the
+  // file is resolved from the server-provided commentId → fileId map.
+  async function revealHashTarget(hash) {
+    const target = document.querySelector(hash);
+    let fileEl = target ? target.closest('details.diff-file') : null;
+
+    if (!fileEl && hash.indexOf('#comment-') === 0) {
+      const commentId = hash.slice('#comment-'.length);
+      const fileId = config.commentFiles && config.commentFiles[commentId];
+      if (fileId) {
+        const sel = '.diff-file[data-file-id="' +
+          (window.CSS && CSS.escape ? CSS.escape(fileId) : fileId) + '"]';
+        fileEl = document.querySelector(sel);
+      }
+    }
+
+    if (!fileEl) {
+      // Not a diff target (e.g. a conversation-tab comment) — best-effort scroll.
+      scrollToHash(hash);
+      return;
+    }
+
+    expandFileChain(fileEl);
+    await loadFileBody(fileEl); // resolves immediately if already loaded / not lazy
+    scrollToHash(hash);
+  }
+
   // Initialize
   init();
 
@@ -57,6 +188,7 @@
     setupPolling();
     setupSidebarLinks();
     setupInlineComments();
+    setupLazyDiffs();
     setupCommentControls();
     setupReplyButtons();
     setupFileReviewToggles();
@@ -259,54 +391,72 @@
   }
 
   // Inline comments
+  //
+  // The inline comment form is NOT rendered per-line anymore (that baked a <form>/<textarea>
+  // into every commentable line — the biggest source of DOM bloat on large diffs). Instead a
+  // single form is built on demand from #inline-comment-form-template and inserted after the
+  // clicked line. There is at most one open form at a time.
   function setupInlineComments() {
-    // Handle click on inline comment buttons
+    const template = document.getElementById('inline-comment-form-template');
+
+    // Remove the currently open inline comment form, if any.
+    function removeOpenForm() {
+      const open = diffContainer.querySelector('.inline-comment-form-row');
+      if (open) open.remove();
+    }
+
+    // Build and insert a form after the given diff line row.
+    function openFormForLine(lineRow) {
+      if (!template) return;
+      removeOpenForm();
+
+      const path = lineRow.dataset.path;
+      const line = lineRow.dataset.line;
+      const side = lineRow.dataset.side;
+      const sha = lineRow.dataset.sha;
+      if (!path || !line) return;
+
+      const fragment = template.content.cloneNode(true);
+      const formRow = fragment.querySelector('.inline-comment-form-row');
+      const form = fragment.querySelector('form');
+      form.action = `/pr/${config.owner}/${config.repo}/${config.prNumber}/inline-comment`;
+      form.querySelector('input[name="path"]').value = path;
+      form.querySelector('input[name="line"]').value = line;
+      form.querySelector('input[name="side"]').value = side || 'RIGHT';
+      form.querySelector('input[name="commit_id"]').value = sha || config.headSha;
+
+      // Insert immediately after the line row (before any existing comment thread row).
+      lineRow.insertAdjacentElement('afterend', formRow);
+
+      const textarea = formRow.querySelector('textarea');
+      if (textarea) textarea.focus();
+    }
+
     diffContainer.addEventListener('click', (e) => {
       const btn = e.target.closest('.line-comment-btn');
       if (!btn) return;
-
       e.preventDefault(); // Prevent scroll to anchor
 
-      const formId = btn.getAttribute('href').substring(1);
-      const formRow = document.getElementById(formId);
-      if (formRow) {
-        // Hide any other open forms
-        document.querySelectorAll('.inline-comment-form-row.visible').forEach(row => {
-          row.classList.remove('visible');
-        });
+      const lineRow = btn.closest('.diff-line');
+      if (lineRow) openFormForLine(lineRow);
+    });
 
-        // Show this form
-        formRow.classList.add('visible');
+    // Handle cancel buttons (the form is removed entirely).
+    diffContainer.addEventListener('click', (e) => {
+      const cancelBtn = e.target.closest('.cancel-inline-comment, .comment-form-close');
+      if (!cancelBtn) return;
+      e.preventDefault();
+      removeOpenForm();
 
-        // Focus textarea
-        const textarea = formRow.querySelector('textarea');
-        if (textarea) {
-          textarea.focus();
-        }
+      if (window.location.hash) {
+        history.replaceState(null, '', window.location.pathname + window.location.search);
       }
     });
 
-    // Handle cancel buttons
-    diffContainer.addEventListener('click', (e) => {
-      const cancelBtn = e.target.closest('.comment-form-close, .inline-comment-form .btn-secondary');
-      if (!cancelBtn) return;
-
-      e.preventDefault();
-
-      // Find and hide the form row
-      const formRow = cancelBtn.closest('.inline-comment-form-row');
-      if (formRow) {
-        formRow.classList.remove('visible');
-        // Clear the textarea
-        const textarea = formRow.querySelector('textarea');
-        if (textarea) {
-          textarea.value = '';
-        }
-      }
-
-      // Also clear hash if present
-      if (window.location.hash) {
-        history.replaceState(null, '', window.location.pathname + window.location.search);
+    // Escape closes the open form.
+    diffContainer.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && e.target.closest('.inline-comment-form-row')) {
+        removeOpenForm();
       }
     });
   }
@@ -412,8 +562,11 @@
           fileEl.classList.toggle('file-reviewed', reviewed);
           // Collapse diff when marked as reviewed, expand when unmarked
           fileEl.open = !reviewed;
-          // Scroll collapsed file into view so the user can see it and the next file
           if (reviewed) {
+            // Marking reviewed collapses the file — discard its lazy body to free memory
+            // (re-fetched on next expand). No-op for non-lazy files.
+            discardFileBody(fileEl);
+            // Scroll collapsed file into view so the user can see it and the next file
             fileEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
           }
         }
@@ -432,23 +585,35 @@
     });
   }
 
+  // Static review-progress totals are computed once and cached. The file set and per-file
+  // line counts don't change after load, so each progress update only needs to re-sum the
+  // currently-checked files (via a path→lines map) instead of rescanning every file — this
+  // matters when bulk "Review all" toggles hundreds of files at once on a large PR.
+  let reviewProgressTotals = null;
+  function getReviewProgressTotals() {
+    if (reviewProgressTotals) return reviewProgressTotals;
+    const linesByPath = new Map();
+    let totalLines = 0;
+    document.querySelectorAll('.diff-file').forEach(el => {
+      const lines = (parseInt(el.dataset.additions) || 0) + (parseInt(el.dataset.deletions) || 0);
+      totalLines += lines;
+      if (el.dataset.path) linesByPath.set(el.dataset.path, lines);
+    });
+    reviewProgressTotals = { totalLines, linesByPath };
+    return reviewProgressTotals;
+  }
+
   function updateReviewProgress() {
     const panel = document.getElementById('review-progress-panel');
     if (!panel) return;
 
-    const allFiles = document.querySelectorAll('.diff-file');
-    const totalFiles = allFiles.length;
-    const reviewedFileCount = document.querySelectorAll('.file-reviewed-toggle:checked').length;
+    const { totalLines, linesByPath } = getReviewProgressTotals();
+    const checked = document.querySelectorAll('.file-reviewed-toggle:checked');
+    const reviewedFileCount = checked.length;
 
-    let totalLines = 0;
     let reviewedLines = 0;
-    allFiles.forEach(el => {
-      const lines = (parseInt(el.dataset.additions) || 0) + (parseInt(el.dataset.deletions) || 0);
-      totalLines += lines;
-      const checkbox = el.querySelector('.file-reviewed-toggle');
-      if (checkbox && checkbox.checked) {
-        reviewedLines += lines;
-      }
+    checked.forEach(cb => {
+      reviewedLines += linesByPath.get(cb.dataset.path) || 0;
     });
 
     const percent = totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0;
@@ -464,14 +629,49 @@
     if (barEl) barEl.style.width = `${percent}%`;
   }
 
+  // Run async tasks with a bounded number in flight at once.
+  async function runWithConcurrency(items, limit, worker) {
+    let index = 0;
+    async function next() {
+      while (index < items.length) {
+        const i = index++;
+        await worker(items[i], i);
+      }
+    }
+    const runners = [];
+    for (let i = 0; i < Math.min(limit, items.length); i++) runners.push(next());
+    await Promise.all(runners);
+  }
+
   // Diff controls
   function setupDiffControls() {
     const expandBtn = document.getElementById('expand-all-diffs');
     const collapseBtn = document.getElementById('collapse-all-diffs');
 
     if (expandBtn) {
-      expandBtn.addEventListener('click', () => {
-        // Expand both directories and files
+      expandBtn.addEventListener('click', async () => {
+        // Materialize every lazy file body first so the entire diff is in the DOM (this is
+        // what makes browser find-in-page work across the whole PR). Then expand everything.
+        const lazyFiles = Array.from(
+          document.querySelectorAll('.diff-file[data-lazy]')
+        ).filter(el => el.querySelector(':scope > .diff-content > .diff-lazy-placeholder'));
+
+        if (lazyFiles.length > 0) {
+          const originalLabel = expandBtn.textContent;
+          expandBtn.disabled = true;
+          let done = 0;
+          const tick = () => { expandBtn.textContent = `Loading ${++done}/${lazyFiles.length}…`; };
+          try {
+            await runWithConcurrency(lazyFiles, 6, async (el) => {
+              await loadFileBody(el);
+              tick();
+            });
+          } finally {
+            expandBtn.disabled = false;
+            expandBtn.textContent = originalLabel;
+          }
+        }
+
         document.querySelectorAll('.diff-directory, .diff-file').forEach(el => {
           el.open = true;
         });
@@ -480,10 +680,11 @@
 
     if (collapseBtn) {
       collapseBtn.addEventListener('click', () => {
-        // Collapse both directories and files
+        // Collapse everything, and discard loaded lazy bodies to free memory.
         document.querySelectorAll('.diff-directory, .diff-file').forEach(el => {
           el.open = false;
         });
+        document.querySelectorAll('.diff-file[data-lazy]').forEach(discardFileBody);
       });
     }
   }
@@ -768,23 +969,11 @@
       }
     });
 
-    // On page load, if there's a hash, expand ancestors and scroll to it
+    // On page load, if there's a hash, expand ancestors and scroll to it. This also resolves
+    // #comment-<id> links that point into a lazily-unloaded file (see revealHashTarget).
     const hash = window.location.hash;
     if (hash && (hash.startsWith('#file-') || hash.startsWith('#comment-'))) {
-      const target = document.querySelector(hash);
-      if (target) {
-        const details = target.closest('details.diff-file');
-        if (details) details.open = true;
-        // Also expand parent directories
-        let parent = details?.parentElement?.closest('details.diff-directory');
-        while (parent) {
-          parent.open = true;
-          parent = parent.parentElement?.closest('details.diff-directory');
-        }
-        requestAnimationFrame(() => {
-          target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
-      }
+      revealHashTarget(hash);
     }
   }
 
@@ -805,7 +994,8 @@
       els.forEach(el => {
         const path = el.dataset.path;
         const fileId = el.dataset.fileId;
-        if (path && fileId) files.push({ path, fileId, el });
+        const reviewed = el.classList.contains('file-reviewed');
+        if (path && fileId) files.push({ path, fileId, el, reviewed });
       });
       return files;
     }
@@ -832,13 +1022,18 @@
         const li = document.createElement('li');
         li.className = 'goto-file-result' + (i === selectedIndex ? ' selected' : '');
         const lastSlash = file.path.lastIndexOf('/');
+        let nameHtml;
         if (lastSlash >= 0) {
           const dir = file.path.substring(0, lastSlash + 1);
           const name = file.path.substring(lastSlash + 1);
-          li.innerHTML = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
+          nameHtml = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
         } else {
-          li.textContent = file.path;
+          nameHtml = escapeHtml(file.path);
         }
+        const icon = file.reviewed
+          ? '<span class="goto-file-status reviewed" title="Reviewed">✓</span>'
+          : '<span class="goto-file-status" title="Not reviewed">○</span>';
+        li.innerHTML = '<span class="goto-file-name">' + nameHtml + '</span>' + icon;
         li.addEventListener('click', () => navigateToFile(file));
         resultsList.appendChild(li);
       });

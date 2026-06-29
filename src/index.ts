@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import pino from 'pino';
 import fastifyView from '@fastify/view';
 import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
@@ -23,17 +24,23 @@ import { authMiddleware, initTokenAuth } from './middleware/auth.js';
 
 const isDev = process.env.NODE_ENV !== 'production';
 
-const fastify = Fastify({
-  logger: isDev
-    ? {
-        level: 'info',
-        transport: {
-          target: 'pino-pretty',
-          options: { translateTime: 'HH:MM:ss Z', ignore: 'pid,hostname' },
-        },
-      }
-    : { level: 'info' }, // Plain JSON logging in production
-});
+// In dev, run pino-pretty as an in-process stream rather than a `transport`.
+// A transport runs pino-pretty in a worker thread via thread-stream, which
+// crashes ("this should not happen: undefined") when the worker inherits the
+// `--import tsx/esm` loader from the dev runner. An in-process stream avoids
+// the worker thread entirely while keeping the same pretty output.
+// pino-pretty is a devDependency, so only import it when actually in dev.
+const logger = isDev
+  ? pino(
+      { level: 'info' },
+      (await import('pino-pretty')).default({
+        translateTime: 'HH:MM:ss Z',
+        ignore: 'pid,hostname',
+      })
+    )
+  : pino({ level: 'info' }); // Plain JSON logging in production
+
+const fastify = Fastify({ logger });
 
 async function start() {
   try {

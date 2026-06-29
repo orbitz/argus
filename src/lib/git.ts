@@ -132,31 +132,50 @@ async function execGit(
 }
 
 /**
- * Ensure a bare clone exists in the cache
+ * Ensure a bare clone exists in the cache, with a blobless promisor `origin`
+ * remote configured. Storing the authenticated remote lets `git diff`/merge
+ * lazily fetch only the blobs they actually need instead of every blob in the
+ * repo snapshot — the key speedup for large repositories.
  */
 export async function ensureRepo(owner: string, repo: string, token: string): Promise<void> {
   const repoPath = getRepoPath(owner, repo);
   const parentDir = dirname(repoPath);
+  const authUrl = buildAuthUrl(owner, repo, token);
 
   // Create parent directory if needed
   if (!existsSync(parentDir)) {
     mkdirSync(parentDir, { recursive: true });
   }
 
-  // If repo doesn't exist, create it
+  // If repo doesn't exist, create it as an empty bare repo.
+  // Refs are fetched on demand (shallow + blobless) by fetchRefs.
   if (!existsSync(repoPath)) {
-    const authUrl = buildAuthUrl(owner, repo, token);
     try {
-      await execGit(['clone', '--bare', authUrl, repoPath], parentDir, token);
+      await execGit(['init', '--bare', repoPath], parentDir);
     } catch (err: any) {
-      throw new Error(`Failed to clone repository: ${sanitizeError(err.message, token)}`);
+      throw new Error(`Failed to initialize repository: ${sanitizeError(err.message, token)}`);
     }
   }
+
+  // (Re)configure `origin` to the current authenticated URL as a blobless
+  // promisor remote. set-url updates the token if it rotated; if origin is
+  // missing (older cache repos), fall back to add. Both are cheap local ops.
+  try {
+    await execGit(['remote', 'set-url', 'origin', authUrl], repoPath, token);
+  } catch {
+    await execGit(['remote', 'add', 'origin', authUrl], repoPath, token);
+  }
+  await execGit(['config', 'remote.origin.promisor', 'true'], repoPath, token);
+  await execGit(['config', 'remote.origin.partialclonefilter', 'blob:none'], repoPath, token);
 }
 
 /**
- * Fetch specific refs from remote
- * Retries with deeper fetch if shallow clone error occurs
+ * Fetch specific refs from the `origin` remote (blobless partial fetch).
+ * Retries with a deeper fetch if a shallow-clone error occurs.
+ *
+ * `depth` controls history depth only; blob contents are always filtered out
+ * and fetched lazily on demand. Callers that just diff two commits should pass
+ * `config.git.shallowDepth` (1); history-dependent callers pass more.
  */
 export async function fetchRefs(
   owner: string,
@@ -166,10 +185,10 @@ export async function fetchRefs(
   depth?: number
 ): Promise<void> {
   const repoPath = getRepoPath(owner, repo);
-  const authUrl = buildAuthUrl(owner, repo, token);
 
   const fetchDepth = depth || config.git.fetchDepth;
-  const args = ['fetch', authUrl, '--depth', fetchDepth.toString(), ...refs];
+  const baseArgs = ['fetch', '--no-tags', '--filter=blob:none'];
+  const args = [...baseArgs, '--depth', fetchDepth.toString(), 'origin', ...refs];
 
   try {
     await execGit(args, repoPath, token);
@@ -179,7 +198,7 @@ export async function fetchRefs(
     // Check if it's a shallow clone error
     if (errorMsg.includes('shallow') || errorMsg.includes('unshallow')) {
       console.log(`Shallow fetch failed, retrying with depth ${config.git.fetchDeepDepth}`);
-      const deepArgs = ['fetch', authUrl, '--depth', config.git.fetchDeepDepth.toString(), ...refs];
+      const deepArgs = [...baseArgs, '--depth', config.git.fetchDeepDepth.toString(), 'origin', ...refs];
       try {
         await execGit(deepArgs, repoPath, token);
       } catch (deepErr: any) {
@@ -204,7 +223,31 @@ async function hasRef(repoPath: string, sha: string, token?: string): Promise<bo
 }
 
 /**
- * Compute merge-base between two refs
+ * Try to compute a merge-base, returning null if none is reachable in the
+ * currently-fetched (shallow) history rather than throwing.
+ */
+async function tryMergeBase(
+  repoPath: string,
+  ref1: string,
+  ref2: string,
+  token: string
+): Promise<string | null> {
+  try {
+    const result = await execGit(['merge-base', ref1, ref2], repoPath, token);
+    const sha = result.stdout.trim();
+    return sha || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Compute merge-base between two refs.
+ *
+ * Starts from a modest shallow depth and deepens progressively until a common
+ * ancestor is found, instead of always paying for a deep fetch up front. Most
+ * PR branches share an ancestor within a few dozen commits, so this is far
+ * faster on large repos while still handling long-lived branches.
  */
 export async function computeMergeBase(
   owner: string,
@@ -217,17 +260,28 @@ export async function computeMergeBase(
 
   await ensureRepo(owner, repo, token);
 
+  // Initial fetch of any missing refs at the starting depth.
   const refsToFetch: string[] = [];
   if (!await hasRef(repoPath, ref1, token)) refsToFetch.push(ref1);
   if (!await hasRef(repoPath, ref2, token)) refsToFetch.push(ref2);
-  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token);
-
-  try {
-    const result = await execGit(['merge-base', ref1, ref2], repoPath, token);
-    return result.stdout.trim();
-  } catch (err: any) {
-    throw new Error(`Failed to compute merge-base: ${sanitizeError(err.message, token)}`);
+  let depth: number = config.git.mergeBaseDepth;
+  if (refsToFetch.length > 0) {
+    await fetchRefs(owner, repo, refsToFetch, token, depth);
   }
+
+  let mergeBase = await tryMergeBase(repoPath, ref1, ref2, token);
+
+  // Deepen progressively until a merge-base is reachable or we hit the cap.
+  while (!mergeBase && depth < config.git.fetchDeepDepth) {
+    depth = Math.min(depth * 4, config.git.fetchDeepDepth);
+    await fetchRefs(owner, repo, [ref1, ref2], token, depth);
+    mergeBase = await tryMergeBase(repoPath, ref1, ref2, token);
+  }
+
+  if (!mergeBase) {
+    throw new Error(`Failed to compute merge-base: no common ancestor found within depth ${depth}`);
+  }
+  return mergeBase;
 }
 
 /**
@@ -296,7 +350,7 @@ export async function computeCrossDiff(
   const refsToFetch: string[] = [];
   if (!await hasRef(repoPath, fromSha, token)) refsToFetch.push(fromSha);
   if (!await hasRef(repoPath, toSha, token)) refsToFetch.push(toSha);
-  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token);
+  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token, config.git.shallowDepth);
 
   const wFlag = options?.ignoreWhitespace ? ['-w'] : [];
 
@@ -412,7 +466,7 @@ export async function getFullFileDiff(
   const refsToFetch: string[] = [];
   if (!await hasRef(repoPath, fromSha, token)) refsToFetch.push(fromSha);
   if (!await hasRef(repoPath, toSha, token)) refsToFetch.push(toSha);
-  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token);
+  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token, config.git.shallowDepth);
 
   const wFlag = options?.ignoreWhitespace ? ['-w'] : [];
 
@@ -530,7 +584,7 @@ export async function computeCrossRevisionDiff(
   for (const ref of [fromMergeBase, fromHead, toMergeBase, toHead]) {
     if (!await hasRef(repoPath, ref, token)) refsToFetch.push(ref);
   }
-  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token);
+  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token, config.git.shallowDepth);
 
   // Three-way merge: base=fromMergeBase, ours=toMergeBase, theirs=fromHead
   // This produces a tree representing fromHead's PR changes rebased onto toMergeBase.

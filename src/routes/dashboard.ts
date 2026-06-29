@@ -1,6 +1,21 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit } from '../lib/github.js';
+import { createUserOctokit, fetchPRFiles, fetchReviews } from '../lib/github.js';
+import { getReviewedFiles } from '../lib/file-reviews.js';
+
+// Determine the set of users whose most recent decisive review approved the PR.
+// Ignores COMMENTED/PENDING reviews, which don't change approval state.
+function getApprovers(reviews: any[]): string[] {
+  const approved = new Map<string, boolean>();
+  for (const review of reviews) {
+    const login = review.user?.login;
+    if (!login) continue;
+    const state = review.state;
+    if (state === 'APPROVED') approved.set(login, true);
+    else if (state === 'CHANGES_REQUESTED' || state === 'DISMISSED') approved.set(login, false);
+  }
+  return [...approved.entries()].filter(([, ok]) => ok).map(([login]) => login);
+}
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
   // Dashboard - show open PRs grouped by repo
@@ -27,8 +42,44 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
           author: string;
           updatedAt: string;
           draft: boolean;
+          reviewedCount: number;
+          totalFiles: number;
+          approved: boolean;
+          otherApprovers: string[];
         }>;
       }> = [];
+
+      const userId = request.user!.githubUserId;
+      const login = request.user!.login;
+
+      // Enrich a single PR with review progress + approval state.
+      // Failures (e.g. permissions) degrade gracefully to zero/false.
+      const enrichPull = async (owner: string, repo: string, prNumber: number) => {
+        try {
+          const [files, reviews] = await Promise.all([
+            fetchPRFiles(octokit, owner, repo, prNumber),
+            fetchReviews(octokit, owner, repo, prNumber),
+          ]);
+
+          const fileShaMap = new Map<string, string>();
+          for (const file of files) {
+            if (file.sha) fileShaMap.set(file.filename, file.sha);
+          }
+
+          const reviewedCount = getReviewedFiles(userId, owner, repo, prNumber, fileShaMap).length;
+
+          const approvers = getApprovers(reviews);
+
+          return {
+            reviewedCount,
+            totalFiles: files.length,
+            approved: approvers.includes(login),
+            otherApprovers: approvers.filter((l) => l !== login),
+          };
+        } catch {
+          return { reviewedCount: 0, totalFiles: 0, approved: false, otherApprovers: [] };
+        }
+      };
 
       // Fetch PRs for top repos (limit to avoid rate limits)
       const prPromises = repos.slice(0, 15).map(async (repo) => {
@@ -43,17 +94,23 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
           });
 
           if (pulls.length > 0) {
-            return {
-              owner: repo.owner?.login || '',
-              name: repo.name,
-              fullName: repo.full_name,
-              pulls: pulls.map((pr) => ({
+            const owner = repo.owner?.login || '';
+            const enriched = await Promise.all(
+              pulls.map(async (pr) => ({
                 number: pr.number,
                 title: pr.title,
                 author: pr.user?.login || 'unknown',
                 updatedAt: pr.updated_at,
                 draft: pr.draft || false,
-              })),
+                ...(await enrichPull(owner, repo.name, pr.number)),
+              }))
+            );
+
+            return {
+              owner,
+              name: repo.name,
+              fullName: repo.full_name,
+              pulls: enriched,
             };
           }
           return null;

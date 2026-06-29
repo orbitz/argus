@@ -1215,6 +1215,11 @@
               Viewing historical revision. Comments and review status are not shown for past revisions.
             </div>
           <% } %>
+          <% if (typeof lazyDiffs !== 'undefined' && lazyDiffs) { %>
+            <div class="lazy-diffs-notice" style="background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: #0550ae;">
+              Large diff — files load when expanded to keep the page responsive. Use <strong>Expand all diffs</strong> to load everything (e.g. for browser find-in-page).
+            </div>
+          <% } %>
           <div class="files-toolbar">
             <button id="expand-all-diffs" class="btn btn-small">Expand all diffs</button>
             <button id="collapse-all-diffs" class="btn btn-small">Collapse all diffs</button>
@@ -1357,7 +1362,9 @@
       isHistoricalView: <%= isHistoricalView ? 'true' : 'false' %>,
       isCrossRevisionView: <%= isCrossRevisionView ? 'true' : 'false' %>,
       isCurrentRevisionExplicit: <%= isCurrentRevisionExplicit ? 'true' : 'false' %>,
-      hideWhitespace: <%= hideWhitespace ? 'true' : 'false' %>
+      hideWhitespace: <%= hideWhitespace ? 'true' : 'false' %>,
+      lazyDiffs: <%= typeof lazyDiffs !== 'undefined' && lazyDiffs ? 'true' : 'false' %>,
+      commentFiles: <%- JSON.stringify(typeof commentFiles !== 'undefined' ? commentFiles : {}) %>
     };
 
     // Tab switching (with loading overlay for expensive layout changes)

@@ -41,6 +41,35 @@
     .pr-draft { color: #886600; font-size: 0.8rem; }
     .pr-meta { color: #888; font-size: 0.85rem; white-space: nowrap; }
 
+    .pr-approved {
+      color: #1a7f37;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    /* Others' approvals: distinct from your own (lighter, outlined, not bold). */
+    .pr-approved-others {
+      color: #57606a;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid #cdd5dd;
+      border-radius: 999px;
+    }
+    .pr-review-progress {
+      color: #666;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid #ddd;
+      border-radius: 999px;
+    }
+    .pr-review-progress.complete {
+      color: #1a7f37;
+      border-color: #1a7f37;
+      background: #eaf6ec;
+    }
+
     .empty-state { color: #666; text-align: center; padding: 3rem; }
     .nav-links { display: flex; gap: 1rem; }
 
@@ -49,6 +78,12 @@
     .search-go { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; background: #0066cc; color: #fff; border: none; border-radius: 4px; }
     .search-go:disabled { opacity: 0.4; cursor: default; }
     .repo-section.hidden, .pr-item.hidden { display: none; }
+
+    .dashboard-controls { display: flex; align-items: center; gap: 1rem; }
+    .show-mine-toggle { color: #666; font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; white-space: nowrap; }
+    .approval-filter select { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; }
+    /* Hide the current user's own PRs by default; revealed when the toggle is on. */
+    .dashboard:not(.show-mine) .pr-item.pr-own { display: none; }
 
     /* Responsive */
     @media (max-width: 768px) {
@@ -94,12 +129,25 @@
 
     <div class="dashboard-header">
       <h1>Open Pull Requests</h1>
-      <span class="dashboard-stats"><%= totalPRs %> PRs across <%= reposWithPRs.length %> repos</span>
+      <div class="dashboard-controls">
+        <label class="show-mine-toggle">
+          <input type="checkbox" id="show-mine"> Show my PRs
+        </label>
+        <label class="approval-filter">
+          <select id="approval-filter">
+            <option value="all">All</option>
+            <option value="approved">Only approved</option>
+            <option value="unapproved">Only unapproved</option>
+          </select>
+        </label>
+        <span class="dashboard-stats"><%= totalPRs %> PRs across <%= reposWithPRs.length %> repos</span>
+      </div>
     </div>
 
     <% if (reposWithPRs.length === 0) { %>
       <p class="empty-state">No open pull requests found in your recent repositories.</p>
     <% } %>
+    <p class="empty-state hidden" id="filtered-empty">No pull requests match the current filters.</p>
 
     <% reposWithPRs.forEach(repo => { %>
       <section class="repo-section">
@@ -109,12 +157,27 @@
         </div>
         <ul class="pr-list">
           <% repo.pulls.forEach(pr => { %>
-            <li class="pr-item">
+            <li class="pr-item<%= user && pr.author === user.login ? ' pr-own' : '' %><%= pr.approved ? ' is-approved' : '' %>">
               <span class="pr-number">#<%= pr.number %></span>
               <span class="pr-link">
                 <a href="/pr/<%= repo.owner %>/<%= repo.name %>/<%= pr.number %>" class="pr-title"><%= pr.title %></a>
                 <% if (pr.draft) { %><span class="pr-draft">(draft)</span><% } %>
               </span>
+              <% if (pr.approved) { %>
+                <span class="pr-approved" title="You approved this PR">✓ Approved by you</span>
+              <% } %>
+              <% if (pr.otherApprovers && pr.otherApprovers.length > 0) {
+                   const others = pr.otherApprovers;
+                   const label = others.length === 1
+                     ? others[0]
+                     : others[0] + ' +' + (others.length - 1); %>
+                <span class="pr-approved-others" title="Approved by <%= others.join(', ') %>">✓ <%= label %></span>
+              <% } %>
+              <% if (pr.totalFiles > 0) {
+                   const allReviewed = pr.reviewedCount >= pr.totalFiles; %>
+                <span class="pr-review-progress <%= allReviewed ? 'complete' : '' %>"
+                      title="You have reviewed <%= pr.reviewedCount %> of <%= pr.totalFiles %> files"><%= pr.reviewedCount %>/<%= pr.totalFiles %> reviewed</span>
+              <% } %>
               <span class="pr-meta"><%= pr.author %></span>
             </li>
           <% }) %>
@@ -127,6 +190,11 @@
     const input = document.getElementById('search-input');
     const goBtn = document.getElementById('search-go');
     const sections = document.querySelectorAll('.repo-section');
+    const dashboard = document.querySelector('.dashboard');
+    const showMine = document.getElementById('show-mine');
+    const approvalFilter = document.getElementById('approval-filter');
+    const statsEl = document.querySelector('.dashboard-stats');
+    const filteredEmpty = document.getElementById('filtered-empty');
     const ghUrlRe = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
 
     function navigateToGhUrl() {
@@ -138,6 +206,51 @@
     }
 
     goBtn.addEventListener('click', navigateToGhUrl);
+
+    // Apply both the search filter and the "show my PRs" toggle, hiding empty
+    // repo sections and keeping the header stats in sync with what's visible.
+    function applyFilters() {
+      const q = input.value.trim().toLowerCase();
+      const mine = showMine.checked;
+      const approval = approvalFilter.value; // 'all' | 'approved' | 'unapproved'
+      dashboard.classList.toggle('show-mine', mine);
+
+      let visiblePRs = 0;
+      let visibleRepos = 0;
+
+      sections.forEach(section => {
+        const items = section.querySelectorAll('.pr-item');
+        let visibleCount = 0;
+
+        items.forEach(item => {
+          const title = item.querySelector('.pr-title').textContent.toLowerCase();
+          const matchesSearch = !q || title.includes(q);
+          const own = item.classList.contains('pr-own');
+          const approved = item.classList.contains('is-approved');
+          const matchesApproval =
+            approval === 'all' ||
+            (approval === 'approved' && approved) ||
+            (approval === 'unapproved' && !approved);
+          const visible = matchesSearch && (mine || !own) && matchesApproval;
+          item.classList.toggle('hidden', !visible);
+          if (visible) visibleCount++;
+        });
+
+        section.classList.toggle('hidden', visibleCount === 0);
+        if (visibleCount > 0) {
+          visibleRepos++;
+          visiblePRs += visibleCount;
+        }
+      });
+
+      statsEl.textContent = `${visiblePRs} PRs across ${visibleRepos} repos`;
+      if (filteredEmpty) {
+        filteredEmpty.classList.toggle('hidden', visiblePRs > 0 || sections.length === 0);
+      }
+    }
+
+    showMine.addEventListener('change', applyFilters);
+    approvalFilter.addEventListener('change', applyFilters);
 
     input.addEventListener('input', () => {
       const q = input.value.trim().toLowerCase();
@@ -154,21 +267,12 @@
         return;
       }
 
-      // Filter PRs by title
-      sections.forEach(section => {
-        const items = section.querySelectorAll('.pr-item');
-        let visibleCount = 0;
-
-        items.forEach(item => {
-          const title = item.querySelector('.pr-title').textContent.toLowerCase();
-          const matches = !q || title.includes(q);
-          item.classList.toggle('hidden', !matches);
-          if (matches) visibleCount++;
-        });
-
-        section.classList.toggle('hidden', visibleCount === 0);
-      });
+      applyFilters();
     });
+
+    // Initial pass: own PRs are hidden by default, so correct the stats/empty
+    // state the server rendered (which counted every PR).
+    applyFilters();
 
     input.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;

@@ -25,7 +25,7 @@ import {
 } from '../lib/github.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
-import { renderFile, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug } from '../lib/diff-renderer.js';
+import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug } from '../lib/diff-renderer.js';
 import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
@@ -95,6 +95,9 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Group review comments by file path with rendered markdown
         type CommentWithRenderedBody = (typeof reviewComments)[0] & { renderedBody: string };
         const commentsByFile = new Map<string, CommentWithRenderedBody[]>();
+        // Map each inline comment id → its file slug, so the client can resolve a
+        // #comment-<id> deep link to a file even when that file's body is lazily unloaded.
+        const commentFiles: Record<string, string> = {};
         for (const comment of reviewComments) {
           const path = comment.path;
           if (!commentsByFile.has(path)) {
@@ -104,6 +107,7 @@ export async function prRoutes(fastify: FastifyInstance) {
             ...comment,
             renderedBody: await renderMarkdown(comment.body),
           });
+          if (path) commentFiles[comment.id] = fileSlug(path);
         }
 
         // Build map of filename → blob SHA for cross-revision review persistence
@@ -257,6 +261,16 @@ export async function prRoutes(fastify: FastifyInstance) {
         }> = [];
 
         const filesToRender = (isHistoricalView || isCrossRevisionView || hideWhitespace) ? historicalFiles : files;
+
+        // For very large PRs on the standard (current-revision) view, render lightweight file
+        // shells and load each file's diff body lazily on expand (see /file-diff endpoint and
+        // public/js/pr.js). The lazy endpoint renders the current PR patch, so lazy mode is
+        // limited to the standard view — historical/cross-revision/whitespace views render
+        // eagerly as before.
+        const lazyDiffs =
+          !isHistoricalView && !isCrossRevisionView && !hideWhitespace &&
+          filesToRender.length > config.diff.lazyFileThreshold;
+
         for (let i = 0; i < filesToRender.length; i++) {
           const file = filesToRender[i];
           const fileComments = (isHistoricalView || isCrossRevisionView) ? [] : (commentsByFile.get(file.filename) || []);
@@ -290,21 +304,26 @@ export async function prRoutes(fastify: FastifyInstance) {
           const parsedFile = parsePatch(file.patch, file.filename, file.status);
 
           const slug = fileSlug(file.filename);
+          const fileSha = file.sha || fileShaMap.get(file.filename) || '';
+          const isReviewed = reviewedFilesSet.has(file.filename);
+          const renderedHtml = lazyDiffs
+            ? renderFileShell(parsedFile, slug, pr.head.sha, isReviewed, enableHighlighting, fileSha)
+            : await renderFile(
+                parsedFile,
+                slug,
+                pr.head.sha,
+                owner,
+                repo,
+                prNumber,
+                fileComments,
+                isReviewed,
+                enableHighlighting,
+                fileSha
+              );
           parsedFiles.push({
             file: parsedFile,
             path: file.filename,
-            renderedHtml: await renderFile(
-              parsedFile,
-              slug,
-              pr.head.sha,
-              owner,
-              repo,
-              prNumber,
-              fileComments,
-              reviewedFilesSet.has(file.filename),
-              enableHighlighting,
-              file.sha || fileShaMap.get(file.filename) || ''
-            ),
+            renderedHtml,
             sidebarHtml: renderFileSidebarItem(parsedFile, slug),
             truncated: false,
             totalLines: 0,
@@ -348,6 +367,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           },
           files: parsedFiles,
           fileTreeHtml,
+          lazyDiffs,
+          commentFiles,
           issueComments: await Promise.all(issueComments.map(async (c) => ({
             ...c,
             renderedBody: await renderMarkdown(c.body),
@@ -770,6 +791,105 @@ export async function prRoutes(fastify: FastifyInstance) {
       } catch (err: any) {
         console.error('Error toggling syntax highlighting:', err);
         return reply.status(500).send({ error: 'Failed to toggle syntax highlighting' });
+      }
+    }
+  );
+
+  // Lazy diff body for a single file (AJAX). Used by the Files view on very large PRs, where
+  // file bodies are rendered as shells and fetched when a file is expanded. Renders the same
+  // current-PR-patch diff table as the eager initial view.
+  fastify.get(
+    '/pr/:owner/:repo/:number/file-diff',
+    async (
+      request: FastifyRequest<{
+        Params: PRParams;
+        Querystring: { path: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      if (!request.user) {
+        return reply.status(401).send({ error: 'Unauthorized' });
+      }
+
+      const { owner, repo, number } = request.params;
+      const prNumber = parseInt(number, 10);
+      const filePath = (request.query as { path?: string }).path;
+
+      if (!filePath) {
+        return reply.status(400).send({ error: 'Missing path parameter' });
+      }
+
+      try {
+        const octokit = createUserOctokit(request.user.accessToken);
+        const pr = await fetchPR(octokit, owner, repo, prNumber);
+        const headSha = pr.head.sha;
+
+        // Serve cached rendered HTML when present. Only comment-less renders are cached
+        // (the cache key is head SHA + path, but inline comments can change without the head
+        // SHA changing — see the write below), so a cache hit is always comment-free and safe.
+        const cached = query<{ rendered_html: string | null }>(
+          `SELECT rendered_html FROM diff_cache
+           WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
+             AND rendered_html IS NOT NULL`,
+          [owner, repo, headSha, filePath]
+        );
+        if (cached.rows.length > 0 && cached.rows[0].rendered_html) {
+          return reply.send({ html: cached.rows[0].rendered_html });
+        }
+
+        const files = await fetchPRFiles(octokit, owner, repo, prNumber);
+        const file = files.find(f => f.filename === filePath);
+        if (!file) {
+          return reply.status(404).send({ error: 'File not found in PR' });
+        }
+        if (!file.patch) {
+          return reply.send({ html: '<div class="diff-binary-notice">Binary file not shown</div>' });
+        }
+
+        // Syntax highlighting preference (default: true), matching the page render.
+        let enableHighlighting = true;
+        const { rows: prefRows } = query<{ preference_value: string }>(
+          `SELECT preference_value FROM user_preferences WHERE user_id = ? AND preference_key = ?`,
+          [request.user.githubUserId, `syntax_${owner}/${repo}`]
+        );
+        if (prefRows.length > 0) {
+          enableHighlighting = prefRows[0].preference_value === '1';
+        }
+
+        // Inline comments for this file.
+        const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
+        const fileComments = await Promise.all(
+          reviewComments
+            .filter(c => c.path === filePath)
+            .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
+        );
+
+        const parsedFile = parsePatch(file.patch, file.filename, file.status);
+        const slug = fileSlug(file.filename);
+        const renderedHtml = await renderFile(
+          parsedFile, slug, headSha, owner, repo, prNumber, fileComments, false,
+          enableHighlighting, file.sha || ''
+        );
+
+        // Extract just the <table> to inject into the file's existing .diff-content.
+        const tableMatch = renderedHtml.match(/<table class="diff-table">[\s\S]*?<\/table>/);
+        const tableHtml = tableMatch ? tableMatch[0] : renderedHtml;
+
+        // Cache only comment-free renders (comments can change without a head-SHA change, and
+        // the cache is not keyed by comment state). Re-expanding a comment-less file — the vast
+        // majority on a large PR — is then instant.
+        if (fileComments.length === 0) {
+          query(
+            `INSERT OR REPLACE INTO diff_cache (owner, repo, head_sha, file_path, diff_data, rendered_html, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
+            [owner, repo, headSha, filePath, file.patch, tableHtml]
+          );
+        }
+
+        return reply.send({ html: tableHtml });
+      } catch (err: any) {
+        console.error('Error fetching file diff:', err);
+        return reply.status(500).send({ error: 'Failed to fetch file diff' });
       }
     }
   );
