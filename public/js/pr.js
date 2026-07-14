@@ -202,6 +202,7 @@
     setupFileDeepLinks();
     setupGoToFileModal();
     setupNextUnreviewedShortcut();
+    setupCheckUpdatesShortcut();
     setupFullFileToggle();
     setupRenderedToggle();
     setupLoadingOverlayForNavigations();
@@ -1185,6 +1186,28 @@
       // Expand the file and scroll to it
       target.open = true;
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    });
+  }
+
+  // Check for updates shortcut
+  function setupCheckUpdatesShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'c') return;
+
+      // Don't trigger in form elements
+      const tag = document.activeElement?.tagName.toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
+
+      // Don't trigger if go-to-file modal is open
+      const modal = document.getElementById('goto-file-modal');
+      if (modal && modal.classList.contains('active')) return;
+
+      // Don't trigger if review form is open
+      const reviewForm = document.getElementById('review-form');
+      if (reviewForm && reviewForm.classList.contains('active')) return;
+
+      e.preventDefault();
+      checkForUpdates();
     });
   }
 
