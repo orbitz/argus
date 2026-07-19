@@ -61,6 +61,45 @@
 }
 .file-header::-webkit-details-marker { display: none; }
 
+/* The header controls (Syntax / Full file / Rendered / Reviewed) get a generous
+   padded hit area so a slightly-off click lands on the control instead of the
+   summary. Clicks anywhere inside these spans are stopped before they reach the
+   <summary>, so the padding is dead space for collapse/expand. */
+.file-header .syntax-checkbox,
+.file-header .full-file-checkbox,
+.file-header .rendered-checkbox,
+.file-header .file-review-checkbox {
+  padding: 0.35rem 0.6rem;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.file-header .syntax-checkbox:hover,
+.file-header .full-file-checkbox:hover,
+.file-header .rendered-checkbox:hover,
+.file-header .file-review-checkbox:hover {
+  background: #ececec;
+}
+
+/* Every control's label carries the same padding as Reviewed's, so all four have an
+   equally forgiving hit area rather than Reviewed being the only comfortable one. */
+.file-header .syntax-checkbox label,
+.file-header .full-file-checkbox label,
+.file-header .rendered-checkbox label,
+.file-header .file-review-checkbox label {
+  padding: 0.25rem;
+}
+
+/* The file path is selectable text, not a collapse target */
+.file-header .file-path { user-select: text; }
+
+/* Current file marker — set when navigating via `n` or by marking a file
+   reviewed. box-shadow rather than border so nothing reflows. */
+.diff-file.diff-file-current {
+  border-color: #0969da;
+  box-shadow: 0 0 0 2px #0969da;
+}
+
 a.file-deep-link:hover { text-decoration: underline; }
 
 .file-stat.additions { color: #008800; }
@@ -284,7 +323,6 @@ a.file-deep-link:hover { text-decoration: underline; }
   cursor: pointer;
   user-select: none;
   color: #666;
-  padding: 0.25rem;
 }
 
 .file-reviewed {

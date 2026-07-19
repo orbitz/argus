@@ -134,6 +134,43 @@
     }
   }
 
+  // ---- Current file marker + unreviewed navigation ------------------------------------
+  // The "current" file is whichever file the user last navigated to — via the `n` shortcut
+  // or by marking a file reviewed (which advances to the next unreviewed one). It gets a
+  // border so the position is obvious when most of the diff is collapsed.
+  function setCurrentFile(fileEl) {
+    document.querySelectorAll('.diff-file.diff-file-current').forEach(el => {
+      if (el !== fileEl) el.classList.remove('diff-file-current');
+    });
+    if (fileEl) fileEl.classList.add('diff-file-current');
+  }
+
+  // Expand a file (plus its parent directories), mark it current, and scroll it to the top.
+  function goToFile(fileEl) {
+    // Switch to the Files tab if we're not already on it
+    const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
+    if (filesTab && !filesTab.classList.contains('active')) {
+      filesTab.click();
+    }
+
+    expandFileChain(fileEl);
+    setCurrentFile(fileEl);
+    fileEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Find the next unreviewed file after `afterEl` in document order, wrapping around to the
+  // first one. Returns null when nothing is left unreviewed. `afterEl` itself is skipped, so
+  // this is safe to call with the file that was just marked reviewed.
+  function findNextUnreviewedFile(afterEl) {
+    const unreviewed = Array.from(document.querySelectorAll('.diff-file:not(.file-reviewed)'));
+    if (unreviewed.length === 0) return null;
+    if (!afterEl) return unreviewed[0];
+
+    const following = unreviewed.find(el => el !== afterEl &&
+      (afterEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return following || unreviewed.find(el => el !== afterEl) || null;
+  }
+
   function scrollToHash(hash) {
     const el = document.querySelector(hash);
     if (el) {
@@ -194,7 +231,8 @@
     setupFileReviewToggles();
     setupDiffControls();
     setupDirectoryControlClickGuard();
-    setupFileStatsClickGuard();
+    setupHeaderControlHitArea();
+    setupHeaderSelectionGuard();
     setupDirectoryCollapseToggles();
     setupDirectoryReviewAllToggles();
     setupSyntaxToggle();
@@ -567,8 +605,15 @@
             // Marking reviewed collapses the file — discard its lazy body to free memory
             // (re-fetched on next expand). No-op for non-lazy files.
             discardFileBody(fileEl);
-            // Scroll collapsed file into view so the user can see it and the next file
-            fileEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Advance to the next unreviewed file so a fully-collapsed diff can be walked
+            // by checking Reviewed alone. Stay put if nothing is left unreviewed.
+            const next = findNextUnreviewedFile(fileEl);
+            if (next) {
+              goToFile(next);
+            } else {
+              // Scroll collapsed file into view so the user can see where they ended up
+              fileEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
           }
         }
 
@@ -690,14 +735,56 @@
     }
   }
 
-  // Prevent clicks on file-stats checkboxes (Reviewed, Syntax, Full File, Rendered)
-  // from toggling the parent <details>. Same pattern as setupDirectoryControlClickGuard.
-  function setupFileStatsClickGuard() {
+  // Selecting text in a file header (e.g. dragging across the path to copy it) ends in a
+  // click on the <summary>, which would collapse/expand the file. Toggling is the summary's
+  // default action, so cancelling the click in the bubble phase suppresses it — and the
+  // selection survives. A plain click leaves the selection collapsed and toggles as usual.
+  function setupHeaderSelectionGuard() {
     if (!diffContainer) return;
-    diffContainer.querySelectorAll('.file-stats').forEach(stats => {
-      stats.addEventListener('click', (e) => {
-        e.stopPropagation();
-      });
+
+    diffContainer.addEventListener('click', (e) => {
+      const summary = e.target.closest('summary');
+      if (summary && hasSelectionWithin(summary)) e.preventDefault();
+    });
+  }
+
+  // True when a non-empty text selection lives inside `el` — i.e. this click is the tail end
+  // of a drag-select, not a plain click. A plain click leaves the selection collapsed.
+  function hasSelectionWithin(el) {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) return false;
+    return el.contains(selection.anchorNode) || el.contains(selection.focusNode);
+  }
+
+  const HEADER_CONTROL_SELECTOR =
+    '.syntax-checkbox, .full-file-checkbox, .rendered-checkbox, .file-review-checkbox';
+
+  // Make each header control (Reviewed / Full file / Rendered / Syntax) a single hit target:
+  // a click anywhere in its padded box toggles the checkbox and never collapses the file.
+  //
+  // We cancel the click outright rather than just stopping propagation. Toggling a <details>
+  // is the <summary>'s activation behaviour, which is the click's *default action* — only
+  // preventDefault reliably cancels it; stopPropagation is a browser-dependent accident.
+  // Cancelling also suppresses the native checkbox change and the <label>'s click-forwarding,
+  // so we drive the checkbox ourselves and every path below produces exactly one toggle.
+  function setupHeaderControlHitArea() {
+    if (!diffContainer) return;
+
+    diffContainer.addEventListener('click', (e) => {
+      const stats = e.target.closest('.file-header .file-stats');
+      if (!stats) return;
+
+      // Nothing in the stats area should ever collapse the file, including the +/- counts.
+      e.preventDefault();
+
+      const control = e.target.closest(HEADER_CONTROL_SELECTOR);
+      if (!control) return;
+
+      const input = control.querySelector('input[type="checkbox"]');
+      if (!input || input.disabled) return;
+
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
   }
 
@@ -948,6 +1035,13 @@
       const link = e.target.closest('.file-deep-link');
       if (!link) return;
 
+      // Drag-selecting the file path ends in a click on the link — don't treat that as a
+      // navigation (it would expand the file and clobber the selection).
+      if (hasSelectionWithin(link)) {
+        e.preventDefault();
+        return;
+      }
+
       e.preventDefault();
       const hash = link.getAttribute('href');
       const url = new URL(window.location);
@@ -1170,22 +1264,7 @@
         target = unreviewed[0];
       }
 
-      // Switch to Files tab if not already active
-      const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-      if (filesTab && !filesTab.classList.contains('active')) {
-        filesTab.click();
-      }
-
-      // Expand parent directories
-      let parent = target.parentElement?.closest('details.diff-directory');
-      while (parent) {
-        parent.open = true;
-        parent = parent.parentElement?.closest('details.diff-directory');
-      }
-
-      // Expand the file and scroll to it
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      goToFile(target);
     });
   }
 
