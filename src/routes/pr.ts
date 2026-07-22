@@ -69,28 +69,30 @@ export async function prRoutes(fastify: FastifyInstance) {
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
 
-        // Fetch PR data in parallel
-        const [pr, files, issueComments, reviewComments, reviews, commits, timeline] = await Promise.all([
-          fetchPR(octokit, owner, repo, prNumber),
-          fetchPRFiles(octokit, owner, repo, prNumber),
-          fetchIssueComments(octokit, owner, repo, prNumber),
-          fetchReviewComments(octokit, owner, repo, prNumber),
-          fetchReviews(octokit, owner, repo, prNumber),
-          fetchPRCommits(octokit, owner, repo, prNumber),
-          fetchPRTimeline(octokit, owner, repo, prNumber),
-        ]);
+        // Fetch PR data in parallel. Checks and combined status only need the head SHA,
+        // so chain them off the PR fetch — they start the moment fetchPR resolves and
+        // overlap with the rest of the batch instead of waiting for a second round-trip.
+        // Both degrade to empty on failure (a PR may have no checks/statuses).
+        const prPromise = fetchPR(octokit, owner, repo, prNumber);
+        const checksPromise = prPromise
+          .then((pr) => fetchChecks(octokit, owner, repo, pr.head.sha))
+          .catch(() => [] as any[]);
+        const statusPromise = prPromise
+          .then((pr) => fetchCombinedStatus(octokit, owner, repo, pr.head.sha))
+          .catch(() => ({ state: 'unknown', statuses: [] as any[] }));
 
-        // Fetch checks (might fail if no checks)
-        let checks: any[] = [];
-        let combinedStatus = { state: 'unknown', statuses: [] as any[] };
-        try {
-          [checks, combinedStatus] = await Promise.all([
-            fetchChecks(octokit, owner, repo, pr.head.sha),
-            fetchCombinedStatus(octokit, owner, repo, pr.head.sha),
+        const [pr, files, issueComments, reviewComments, reviews, commits, timeline, checks, combinedStatus] =
+          await Promise.all([
+            prPromise,
+            fetchPRFiles(octokit, owner, repo, prNumber),
+            fetchIssueComments(octokit, owner, repo, prNumber),
+            fetchReviewComments(octokit, owner, repo, prNumber),
+            fetchReviews(octokit, owner, repo, prNumber),
+            fetchPRCommits(octokit, owner, repo, prNumber),
+            fetchPRTimeline(octokit, owner, repo, prNumber),
+            checksPromise,
+            statusPromise,
           ]);
-        } catch (err) {
-          // Checks might not exist, that's ok
-        }
 
         // Group review comments by file path with rendered markdown
         type CommentWithRenderedBody = (typeof reviewComments)[0] & { renderedBody: string };
@@ -139,7 +141,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
         }
 
-        // Backfill all historical revisions from GitHub timeline
+        // Backfill all historical revisions from GitHub timeline (reuse the timeline
+        // already fetched above instead of fetching it a second time).
         await backfillRevisions(
           owner,
           repo,
@@ -149,7 +152,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           pr.head.ref,
           pr.head.sha,
           request.user!.accessToken,
-          octokit
+          timeline
         );
 
         // Get all seen revisions
@@ -1030,12 +1033,13 @@ export async function prRoutes(fastify: FastifyInstance) {
 
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
-        const [pr, commits] = await Promise.all([
+        const [pr, commits, timeline] = await Promise.all([
           fetchPR(octokit, owner, repo, prNumber),
           fetchPRCommits(octokit, owner, repo, prNumber),
+          fetchPRTimeline(octokit, owner, repo, prNumber),
         ]);
 
-        // Backfill all historical revisions from GitHub timeline
+        // Backfill all historical revisions from GitHub timeline (fetched in parallel above)
         await backfillRevisions(
           owner,
           repo,
@@ -1045,7 +1049,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           pr.head.ref,
           pr.head.sha,
           request.user!.accessToken,
-          octokit
+          timeline
         );
 
         const revisions = getRevisions(owner, repo, prNumber);
@@ -1552,11 +1556,9 @@ async function backfillRevisions(
   headRef: string,
   currentHeadSha: string,
   accessToken: string,
-  octokit: any
+  timeline: Awaited<ReturnType<typeof fetchPRTimeline>>
 ): Promise<void> {
   try {
-    const timeline = await fetchPRTimeline(octokit, owner, repo, prNumber);
-
     // Extract force-push events and initial commit
     const revisions: Array<{ sha: string; timestamp: string }> = [];
 

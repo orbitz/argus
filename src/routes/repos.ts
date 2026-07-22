@@ -83,19 +83,15 @@ export async function repoRoutes(fastify: FastifyInstance) {
         const approvals = await Promise.all(
           pulls.map(async (pr) => {
             try {
-              const reviews = await fetchReviews(octokit, owner, repo, pr.number);
-              const approvers = getApprovers(reviews);
-              console.error(
-                `[approvals] #${pr.number} reviews=${reviews.length} ` +
-                  `states=${JSON.stringify(reviews.map((r: any) => [r.user?.login, r.state]))} ` +
-                  `approvers=${JSON.stringify(approvers)} viewer=${login}`
-              );
+              const approvers = getApprovers(await fetchReviews(octokit, owner, repo, pr.number));
               return {
                 approved: approvers.includes(login),
                 otherApprovers: approvers.filter((l) => l !== login),
               };
             } catch (err: any) {
-              console.error(`[approvals] #${pr.number} FAILED:`, err.status, err.message);
+              // Degrade to "not approved", but never silently — a swallowed failure
+              // here is indistinguishable from a PR that genuinely has no approvals.
+              console.error(`Failed to fetch reviews for PR #${pr.number}:`, err.status, err.message);
               return { approved: false, otherApprovers: [] as string[] };
             }
           })
