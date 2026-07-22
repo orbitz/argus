@@ -32,6 +32,22 @@
     .pull-draft { color: #886600; font-size: 0.8rem; }
     .pull-author { color: #888; font-size: 0.85rem; white-space: nowrap; }
 
+    .pull-approved {
+      color: #1a7f37;
+      font-size: 0.8rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+    /* Others' approvals: distinct from your own (lighter, outlined, not bold). */
+    .pull-approved-others {
+      color: #57606a;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      padding: 0.1rem 0.4rem;
+      border: 1px solid #cdd5dd;
+      border-radius: 999px;
+    }
+
     .empty-state { color: #666; text-align: center; padding: 3rem; }
 
     /* Responsive */
@@ -88,6 +104,16 @@
                 <span class="pull-number">#<%= pr.number %></span>
                 <span class="pull-title"><%= pr.title %></span>
                 <% if (pr.draft) { %><span class="pull-draft">(draft)</span><% } %>
+                <% if (pr.approved) { %>
+                  <span class="pull-approved" title="You approved this PR">✓ Approved by you</span>
+                <% } %>
+                <% if (pr.otherApprovers && pr.otherApprovers.length > 0) {
+                     const others = pr.otherApprovers;
+                     const label = others.length === 1
+                       ? others[0]
+                       : others[0] + ' +' + (others.length - 1); %>
+                  <span class="pull-approved-others" title="Approved by <%= others.join(', ') %>">✓ <%= label %></span>
+                <% } %>
                 <span class="pull-author"><%= pr.user.login %></span>
               </div>
             </a>

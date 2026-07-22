@@ -1,21 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit, fetchPRFiles, fetchReviews } from '../lib/github.js';
+import { createUserOctokit, fetchPRFiles, fetchReviews, getApprovers } from '../lib/github.js';
 import { getReviewedFiles } from '../lib/file-reviews.js';
-
-// Determine the set of users whose most recent decisive review approved the PR.
-// Ignores COMMENTED/PENDING reviews, which don't change approval state.
-function getApprovers(reviews: any[]): string[] {
-  const approved = new Map<string, boolean>();
-  for (const review of reviews) {
-    const login = review.user?.login;
-    if (!login) continue;
-    const state = review.state;
-    if (state === 'APPROVED') approved.set(login, true);
-    else if (state === 'CHANGES_REQUESTED' || state === 'DISMISSED') approved.set(login, false);
-  }
-  return [...approved.entries()].filter(([, ok]) => ok).map(([login]) => login);
-}
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
   // Dashboard - show open PRs grouped by repo

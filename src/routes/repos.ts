@@ -1,6 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit } from '../lib/github.js';
+import { createUserOctokit, fetchReviews, getApprovers } from '../lib/github.js';
 import { config } from '../config.js';
 
 export async function repoRoutes(fastify: FastifyInstance) {
@@ -77,13 +77,37 @@ export async function repoRoutes(fastify: FastifyInstance) {
           per_page: 50,
         });
 
+        const login = request.user!.login;
+
+        // Approval state per PR. Failures (e.g. permissions) degrade to "not approved".
+        const approvals = await Promise.all(
+          pulls.map(async (pr) => {
+            try {
+              const reviews = await fetchReviews(octokit, owner, repo, pr.number);
+              const approvers = getApprovers(reviews);
+              console.error(
+                `[approvals] #${pr.number} reviews=${reviews.length} ` +
+                  `states=${JSON.stringify(reviews.map((r: any) => [r.user?.login, r.state]))} ` +
+                  `approvers=${JSON.stringify(approvers)} viewer=${login}`
+              );
+              return {
+                approved: approvers.includes(login),
+                otherApprovers: approvers.filter((l) => l !== login),
+              };
+            } catch (err: any) {
+              console.error(`[approvals] #${pr.number} FAILED:`, err.status, err.message);
+              return { approved: false, otherApprovers: [] as string[] };
+            }
+          })
+        );
+
         return reply.view('pulls', {
           title: `Pull Requests - ${owner}/${repo} - Argus`,
           user: request.user,
           owner,
           repo,
           state,
-          pulls: pulls.map((pr) => ({
+          pulls: pulls.map((pr, i) => ({
             number: pr.number,
             title: pr.title,
             state: pr.state,
@@ -96,6 +120,8 @@ export async function repoRoutes(fastify: FastifyInstance) {
             updatedAt: pr.updated_at,
             headRef: pr.head.ref,
             baseRef: pr.base.ref,
+            approved: approvals[i].approved,
+            otherApprovers: approvals[i].otherApprovers,
           })),
         });
       } catch (err: any) {
