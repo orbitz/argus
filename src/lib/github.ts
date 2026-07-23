@@ -53,6 +53,34 @@ export function createUserOctokit(_accessToken?: string): Octokit {
   return getOctokit();
 }
 
+// --- API response cache helpers (ETag + TTL against the api_cache table) ---
+interface CacheHit {
+  data: string;
+  etag: string;
+}
+
+function readApiCache(cacheKey: string): CacheHit | null {
+  const { rows } = query<CacheHit>(
+    `SELECT data, etag FROM api_cache
+     WHERE cache_key = ? AND expires_at > datetime('now')`,
+    [cacheKey]
+  );
+  return rows.length > 0 ? rows[0] : null;
+}
+
+function writeApiCache(cacheKey: string, etag: string | null, data: unknown): void {
+  query(
+    `INSERT INTO api_cache (cache_key, etag, data, fetched_at, expires_at)
+     VALUES (?, ?, ?, datetime('now'), datetime('now', '+${config.cacheTtl} seconds'))
+     ON CONFLICT (cache_key) DO UPDATE SET
+       etag = excluded.etag,
+       data = excluded.data,
+       fetched_at = datetime('now'),
+       expires_at = datetime('now', '+${config.cacheTtl} seconds')`,
+    [cacheKey, etag, JSON.stringify(data)]
+  );
+}
+
 // API response types
 export interface PRData {
   number: number;
@@ -215,14 +243,45 @@ export async function fetchPRFiles(
   repo: string,
   prNumber: number
 ): Promise<PRFile[]> {
-  const files = await octokit.paginate(octokit.pulls.listFiles, {
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
+  const cacheKey = `pr-files:${owner}/${repo}#${prNumber}`;
+  const cached = readApiCache(cacheKey);
 
-  return files as PRFile[];
+  const headers: Record<string, string> = {};
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
+  try {
+    // The first page carries the ETag we validate against. Only keep paginating when the
+    // Link header says more pages remain — most PRs fit in one page, so the common case is
+    // a single request that 304s on repeat loads.
+    const first = await octokit.pulls.listFiles({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+      headers,
+    });
+
+    let files = first.data as PRFile[];
+    const link = first.headers.link;
+    if (typeof link === 'string' && link.includes('rel="next"')) {
+      const rest = await octokit.paginate(octokit.pulls.listFiles, {
+        owner,
+        repo,
+        pull_number: prNumber,
+        per_page: 100,
+        page: 2,
+      });
+      files = files.concat(rest as PRFile[]);
+    }
+
+    writeApiCache(cacheKey, first.headers.etag || null, files);
+    return files;
+  } catch (err: any) {
+    if (err.status === 304 && cached) {
+      return JSON.parse(cached.data) as PRFile[];
+    }
+    throw err;
+  }
 }
 
 // Fetch PR diff (raw)
@@ -321,14 +380,28 @@ export async function fetchReviews(
   repo: string,
   prNumber: number
 ): Promise<any[]> {
-  const response = await octokit.pulls.listReviews({
-    owner,
-    repo,
-    pull_number: prNumber,
-    per_page: 100,
-  });
+  const cacheKey = `pr-reviews:${owner}/${repo}#${prNumber}`;
+  const cached = readApiCache(cacheKey);
 
-  return response.data;
+  const headers: Record<string, string> = {};
+  if (cached?.etag) headers['If-None-Match'] = cached.etag;
+
+  try {
+    const response = await octokit.pulls.listReviews({
+      owner,
+      repo,
+      pull_number: prNumber,
+      per_page: 100,
+      headers,
+    });
+    writeApiCache(cacheKey, response.headers.etag || null, response.data);
+    return response.data;
+  } catch (err: any) {
+    if (err.status === 304 && cached) {
+      return JSON.parse(cached.data) as any[];
+    }
+    throw err;
+  }
 }
 
 // Determine the set of users whose most recent decisive review approved the PR.

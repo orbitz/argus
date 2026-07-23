@@ -1,7 +1,37 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { performance } from 'node:perf_hooks';
 import { requireAuth } from '../middleware/auth.js';
 import { createUserOctokit, fetchPRFiles, fetchReviews, getApprovers } from '../lib/github.js';
 import { getReviewedFiles } from '../lib/file-reviews.js';
+
+// Bound how many PRs are enriched concurrently. The dashboard enriches every open PR across
+// many repos (each enrich = a files + reviews fetch); firing them all at once bursts past
+// GitHub's secondary rate limit and saturates the socket pool. A small cap keeps it fast.
+const ENRICH_CONCURRENCY = 8;
+
+function createLimiter(max: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  const pump = () => {
+    while (active < max && queue.length > 0) {
+      active++;
+      queue.shift()!();
+    }
+  };
+  return function limit<T>(fn: () => Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      queue.push(() => {
+        fn()
+          .then(resolve, reject)
+          .finally(() => {
+            active--;
+            pump();
+          });
+      });
+      pump();
+    });
+  };
+}
 
 export async function dashboardRoutes(fastify: FastifyInstance) {
   // Dashboard - show open PRs grouped by repo
@@ -11,11 +41,18 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
     try {
       const octokit = createUserOctokit(request.user!.accessToken);
 
+      // --- Performance instrumentation (dashboard was observed taking ~100s) ---
+      const perfStart = performance.now();
+      const enrichTimings: Array<{ pr: string; ms: number; files: number; reviews: number }> = [];
+      const repoTimings: Array<{ repo: string; pullsMs: number; prCount: number; enrichMs: number }> = [];
+
       // Fetch repos with recent activity
+      const reposStart = performance.now();
       const { data: repos } = await octokit.repos.listForAuthenticatedUser({
         sort: 'pushed',
         per_page: 30,
       });
+      const reposListMs = performance.now() - reposStart;
 
       // Fetch open PRs for each repo (in parallel, limited)
       const reposWithPRs: Array<{
@@ -41,11 +78,19 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
       // Enrich a single PR with review progress + approval state.
       // Failures (e.g. permissions) degrade gracefully to zero/false.
       const enrichPull = async (owner: string, repo: string, prNumber: number) => {
+        const enrichStart = performance.now();
         try {
           const [files, reviews] = await Promise.all([
             fetchPRFiles(octokit, owner, repo, prNumber),
             fetchReviews(octokit, owner, repo, prNumber),
           ]);
+          // Record the (uncached) network cost of enriching this one PR.
+          enrichTimings.push({
+            pr: `${owner}/${repo}#${prNumber}`,
+            ms: performance.now() - enrichStart,
+            files: files.length,
+            reviews: reviews.length,
+          });
 
           const fileShaMap = new Map<string, string>();
           for (const file of files) {
@@ -67,9 +112,14 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
         }
       };
 
+      // Shared across all repos so total in-flight enrichment stays bounded (not per-repo).
+      const limit = createLimiter(ENRICH_CONCURRENCY);
+
       // Fetch PRs for top repos (limit to avoid rate limits)
       const prPromises = repos.slice(0, 15).map(async (repo) => {
+        const repoLabel = `${repo.owner?.login || ''}/${repo.name}`;
         try {
+          const pullsStart = performance.now();
           const { data: pulls } = await octokit.pulls.list({
             owner: repo.owner?.login || '',
             repo: repo.name,
@@ -78,9 +128,11 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
             direction: 'desc',
             per_page: 10,
           });
+          const pullsMs = performance.now() - pullsStart;
 
           if (pulls.length > 0) {
             const owner = repo.owner?.login || '';
+            const enrichStart = performance.now();
             const enriched = await Promise.all(
               pulls.map(async (pr) => ({
                 number: pr.number,
@@ -88,9 +140,10 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
                 author: pr.user?.login || 'unknown',
                 updatedAt: pr.updated_at,
                 draft: pr.draft || false,
-                ...(await enrichPull(owner, repo.name, pr.number)),
+                ...(await limit(() => enrichPull(owner, repo.name, pr.number))),
               }))
             );
+            repoTimings.push({ repo: repoLabel, pullsMs, prCount: pulls.length, enrichMs: performance.now() - enrichStart });
 
             return {
               owner,
@@ -99,6 +152,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
               pulls: enriched,
             };
           }
+          repoTimings.push({ repo: repoLabel, pullsMs, prCount: 0, enrichMs: 0 });
           return null;
         } catch {
           return null;
@@ -121,6 +175,31 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
 
       // Count total PRs
       const totalPRs = reposWithPRs.reduce((sum, r) => sum + r.pulls.length, 0);
+
+      // Emit a performance breakdown so a slow dashboard can be diagnosed from the logs.
+      // Compares wall-clock to the summed per-PR enrich cost, flags the slowest PRs/repos,
+      // and surfaces the biggest file-list pagination (the most likely culprit).
+      const enrichSorted = [...enrichTimings].sort((a, b) => b.ms - a.ms);
+      const enrichSumMs = enrichTimings.reduce((s, e) => s + e.ms, 0);
+      const maxFiles = enrichTimings.reduce((m, e) => Math.max(m, e.files), 0);
+      request.log.info(
+        {
+          dashboardMs: Math.round(performance.now() - perfStart),
+          reposListMs: Math.round(reposListMs),
+          repoCount: repos.length,
+          reposProcessed: Math.min(repos.length, 15),
+          prsEnriched: enrichTimings.length,
+          enrichSumMs: Math.round(enrichSumMs), // total API time across all PRs (parallel, so >> wall-clock is expected)
+          enrichSlowestMs: Math.round(enrichSorted[0]?.ms ?? 0),
+          maxFilesInAnyPR: maxFiles,
+          slowestPRs: enrichSorted.slice(0, 8).map((e) => ({ pr: e.pr, ms: Math.round(e.ms), files: e.files, reviews: e.reviews })),
+          slowestRepos: [...repoTimings]
+            .sort((a, b) => b.pullsMs + b.enrichMs - (a.pullsMs + a.enrichMs))
+            .slice(0, 8)
+            .map((r) => ({ repo: r.repo, pullsMs: Math.round(r.pullsMs), enrichMs: Math.round(r.enrichMs), prs: r.prCount })),
+        },
+        'dashboard performance breakdown'
+      );
 
       return reply.view('dashboard', {
         title: 'Dashboard - Argus',
