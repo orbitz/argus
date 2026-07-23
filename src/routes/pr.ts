@@ -265,13 +265,13 @@ export async function prRoutes(fastify: FastifyInstance) {
 
         const filesToRender = (isHistoricalView || isCrossRevisionView || hideWhitespace) ? historicalFiles : files;
 
-        // For very large PRs on the standard (current-revision) view, render lightweight file
-        // shells and load each file's diff body lazily on expand (see /file-diff endpoint and
-        // public/js/pr.js). The lazy endpoint renders the current PR patch, so lazy mode is
-        // limited to the standard view — historical/cross-revision/whitespace views render
-        // eagerly as before.
+        // For very large PRs, render lightweight file shells and load each file's diff body
+        // lazily on expand (see /file-diff endpoint and public/js/pr.js). Supported for the
+        // standard current-revision view and the whitespace-hidden view (the lazy endpoint
+        // recomputes the whitespace-ignored per-file diff when ?w=1). Historical and
+        // cross-revision views still render eagerly (no per-file lazy endpoint for those).
         const lazyDiffs =
-          !isHistoricalView && !isCrossRevisionView && !hideWhitespace &&
+          !isHistoricalView && !isCrossRevisionView &&
           filesToRender.length > config.diff.lazyFileThreshold;
 
         for (let i = 0; i < filesToRender.length; i++) {
@@ -799,14 +799,15 @@ export async function prRoutes(fastify: FastifyInstance) {
   );
 
   // Lazy diff body for a single file (AJAX). Used by the Files view on very large PRs, where
-  // file bodies are rendered as shells and fetched when a file is expanded. Renders the same
-  // current-PR-patch diff table as the eager initial view.
+  // file bodies are rendered as shells and fetched when a file is expanded. Renders the
+  // current-PR-patch diff table; with ?w=1 it recomputes the whitespace-ignored per-file diff
+  // from the git cache so the lazy body matches the whitespace-hidden page.
   fastify.get(
     '/pr/:owner/:repo/:number/file-diff',
     async (
       request: FastifyRequest<{
         Params: PRParams;
-        Querystring: { path: string };
+        Querystring: { path: string; w?: string };
       }>,
       reply: FastifyReply
     ) => {
@@ -817,6 +818,7 @@ export async function prRoutes(fastify: FastifyInstance) {
       const { owner, repo, number } = request.params;
       const prNumber = parseInt(number, 10);
       const filePath = (request.query as { path?: string }).path;
+      const hideWhitespace = (request.query as { w?: string }).w === '1';
 
       if (!filePath) {
         return reply.status(400).send({ error: 'Missing path parameter' });
@@ -827,25 +829,54 @@ export async function prRoutes(fastify: FastifyInstance) {
         const pr = await fetchPR(octokit, owner, repo, prNumber);
         const headSha = pr.head.sha;
 
-        // Serve cached rendered HTML when present. Only comment-less renders are cached
-        // (the cache key is head SHA + path, but inline comments can change without the head
-        // SHA changing — see the write below), so a cache hit is always comment-free and safe.
-        const cached = query<{ rendered_html: string | null }>(
-          `SELECT rendered_html FROM diff_cache
-           WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
-             AND rendered_html IS NOT NULL`,
-          [owner, repo, headSha, filePath]
-        );
-        if (cached.rows.length > 0 && cached.rows[0].rendered_html) {
-          return reply.send({ html: cached.rows[0].rendered_html });
+        // The diff_cache stores the standard (whitespace-included) render keyed by head SHA +
+        // path, so it is only valid for the non-whitespace view — skip it entirely for ?w=1.
+        if (!hideWhitespace) {
+          // Serve cached rendered HTML when present. Only comment-less renders are cached, so a
+          // cache hit is always comment-free and safe (inline comments can change without the
+          // head SHA changing — see the write below).
+          const cached = query<{ rendered_html: string | null }>(
+            `SELECT rendered_html FROM diff_cache
+             WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
+               AND rendered_html IS NOT NULL`,
+            [owner, repo, headSha, filePath]
+          );
+          if (cached.rows.length > 0 && cached.rows[0].rendered_html) {
+            return reply.send({ html: cached.rows[0].rendered_html });
+          }
         }
 
-        const files = await fetchPRFiles(octokit, owner, repo, prNumber);
-        const file = files.find(f => f.filename === filePath);
-        if (!file) {
-          return reply.status(404).send({ error: 'File not found in PR' });
+        // Resolve this file's patch/status/blob-sha for the active view mode.
+        let patch: string | undefined;
+        let status: string;
+        let fileSha: string;
+        if (hideWhitespace) {
+          // Whitespace-ignored diff via the git cache. computeCrossDiff memoises the full
+          // cross-diff in-process, so this reuses the work the page render already did.
+          const mergeBase = await computeMergeBase(
+            owner, repo, pr.base.sha, pr.head.sha, request.user.accessToken
+          );
+          const wFiles = await computeCrossDiff(
+            owner, repo, mergeBase, pr.head.sha, request.user.accessToken, { ignoreWhitespace: true }
+          );
+          const wFile = wFiles.find(f => f.filename === filePath);
+          if (!wFile) {
+            return reply.send({ html: '<div class="diff-empty-notice">No changes</div>' });
+          }
+          patch = wFile.patch;
+          status = wFile.status;
+          fileSha = '';
+        } else {
+          const files = await fetchPRFiles(octokit, owner, repo, prNumber);
+          const file = files.find(f => f.filename === filePath);
+          if (!file) {
+            return reply.status(404).send({ error: 'File not found in PR' });
+          }
+          patch = file.patch;
+          status = file.status;
+          fileSha = file.sha || '';
         }
-        if (!file.patch) {
+        if (!patch) {
           return reply.send({ html: '<div class="diff-binary-notice">Binary file not shown</div>' });
         }
 
@@ -867,25 +898,24 @@ export async function prRoutes(fastify: FastifyInstance) {
             .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
         );
 
-        const parsedFile = parsePatch(file.patch, file.filename, file.status);
-        const slug = fileSlug(file.filename);
+        const parsedFile = parsePatch(patch, filePath, status);
+        const slug = fileSlug(filePath);
         const renderedHtml = await renderFile(
           parsedFile, slug, headSha, owner, repo, prNumber, fileComments, false,
-          enableHighlighting, file.sha || ''
+          enableHighlighting, fileSha
         );
 
         // Extract just the <table> to inject into the file's existing .diff-content.
         const tableMatch = renderedHtml.match(/<table class="diff-table">[\s\S]*?<\/table>/);
         const tableHtml = tableMatch ? tableMatch[0] : renderedHtml;
 
-        // Cache only comment-free renders (comments can change without a head-SHA change, and
-        // the cache is not keyed by comment state). Re-expanding a comment-less file — the vast
-        // majority on a large PR — is then instant.
-        if (fileComments.length === 0) {
+        // Cache only standard, comment-free renders (the cache is keyed by head SHA + path,
+        // not by comment state or whitespace mode). Re-expanding such a file is then instant.
+        if (!hideWhitespace && fileComments.length === 0) {
           query(
             `INSERT OR REPLACE INTO diff_cache (owner, repo, head_sha, file_path, diff_data, rendered_html, fetched_at)
              VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-            [owner, repo, headSha, filePath, file.patch, tableHtml]
+            [owner, repo, headSha, filePath, patch, tableHtml]
           );
         }
 

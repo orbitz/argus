@@ -68,7 +68,20 @@ function readApiCache(cacheKey: string): CacheHit | null {
   return rows.length > 0 ? rows[0] : null;
 }
 
+// Skip caching payloads above this size. Guards against both SQLite bloat and V8's
+// max string length (~512M chars): a huge PR's file list can exceed it and make
+// JSON.stringify throw "Invalid string length". Oversized responses simply aren't cached.
+const MAX_CACHE_BYTES = 25 * 1024 * 1024; // 25 MB
+
 function writeApiCache(cacheKey: string, etag: string | null, data: unknown): void {
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(data);
+  } catch {
+    return; // e.g. RangeError: Invalid string length — too big to cache, not fatal
+  }
+  if (serialized.length > MAX_CACHE_BYTES) return;
+
   query(
     `INSERT INTO api_cache (cache_key, etag, data, fetched_at, expires_at)
      VALUES (?, ?, ?, datetime('now'), datetime('now', '+${config.cacheTtl} seconds'))
@@ -77,7 +90,7 @@ function writeApiCache(cacheKey: string, etag: string | null, data: unknown): vo
        data = excluded.data,
        fetched_at = datetime('now'),
        expires_at = datetime('now', '+${config.cacheTtl} seconds')`,
-    [cacheKey, etag, JSON.stringify(data)]
+    [cacheKey, etag, serialized]
   );
 }
 

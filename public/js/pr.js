@@ -62,7 +62,9 @@
 
     const p = (async () => {
       try {
-        const url = `/pr/${config.owner}/${config.repo}/${config.prNumber}/file-diff?path=${encodeURIComponent(path)}`;
+        // Carry the whitespace-hidden mode through to the lazy body so it matches the page.
+        const wParam = config.hideWhitespace ? '&w=1' : '';
+        const url = `/pr/${config.owner}/${config.repo}/${config.prNumber}/file-diff?path=${encodeURIComponent(path)}${wParam}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Server returned ' + response.status);
         const data = await response.json();
