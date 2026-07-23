@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
 import { createUserOctokit, fetchReviews, getApprovers } from '../lib/github.js';
+import { buildStacks } from '../lib/stacks.js';
 import { config } from '../config.js';
 
 export async function repoRoutes(fastify: FastifyInstance) {
@@ -97,28 +98,37 @@ export async function repoRoutes(fastify: FastifyInstance) {
           })
         );
 
+        const enrichedPulls = pulls.map((pr, i) => ({
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          draft: pr.draft,
+          user: {
+            login: pr.user?.login || 'unknown',
+            avatarUrl: pr.user?.avatar_url || '',
+          },
+          createdAt: pr.created_at,
+          updatedAt: pr.updated_at,
+          headRef: pr.head.ref,
+          baseRef: pr.base.ref,
+          // Only same-repo PRs participate in stack linking (see buildStacks). A null
+          // head.repo (deleted branch) or a fork resolves to false.
+          sameRepo: pr.head.repo?.full_name === pr.base.repo?.full_name,
+          approved: approvals[i].approved,
+          otherApprovers: approvals[i].otherApprovers,
+        }));
+
+        // Group into stacks (chains/trees linked by base<-head branch) + standalone PRs.
+        const { stacks, standalone } = buildStacks(enrichedPulls);
+
         return reply.view('pulls', {
           title: `Pull Requests - ${owner}/${repo} - Argus`,
           user: request.user,
           owner,
           repo,
           state,
-          pulls: pulls.map((pr, i) => ({
-            number: pr.number,
-            title: pr.title,
-            state: pr.state,
-            draft: pr.draft,
-            user: {
-              login: pr.user?.login || 'unknown',
-              avatarUrl: pr.user?.avatar_url || '',
-            },
-            createdAt: pr.created_at,
-            updatedAt: pr.updated_at,
-            headRef: pr.head.ref,
-            baseRef: pr.base.ref,
-            approved: approvals[i].approved,
-            otherApprovers: approvals[i].otherApprovers,
-          })),
+          stacks,
+          standalone,
         });
       } catch (err: any) {
         console.error('Error fetching PRs:', err);
