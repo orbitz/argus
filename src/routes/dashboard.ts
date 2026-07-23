@@ -1,8 +1,8 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { performance } from 'node:perf_hooks';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit, fetchPRFiles, fetchReviews, getApprovers } from '../lib/github.js';
-import { getReviewedFiles } from '../lib/file-reviews.js';
+import { createUserOctokit, fetchPR, fetchReviews, getApprovers } from '../lib/github.js';
+import { countReviewedFilesAtHead } from '../lib/file-reviews.js';
 
 // Bound how many PRs are enriched concurrently. The dashboard enriches every open PR across
 // many repos (each enrich = a files + reviews fetch); firing them all at once bursts past
@@ -77,33 +77,32 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
 
       // Enrich a single PR with review progress + approval state.
       // Failures (e.g. permissions) degrade gracefully to zero/false.
-      const enrichPull = async (owner: string, repo: string, prNumber: number) => {
+      //
+      // Deliberately does NOT list the PR's files: a large PR (e.g. 3000 files) makes
+      // fetchPRFiles paginate dozens of multi-MB pages and dominates the whole dashboard.
+      // Instead totalFiles comes from the PR's changed_files count (one small cached call)
+      // and reviewedCount from the local DB at the current head (no network).
+      const enrichPull = async (owner: string, repo: string, prNumber: number, headSha: string) => {
         const enrichStart = performance.now();
         try {
-          const [files, reviews] = await Promise.all([
-            fetchPRFiles(octokit, owner, repo, prNumber),
+          const [pr, reviews] = await Promise.all([
+            fetchPR(octokit, owner, repo, prNumber),
             fetchReviews(octokit, owner, repo, prNumber),
           ]);
-          // Record the (uncached) network cost of enriching this one PR.
+          const totalFiles = pr.changed_files ?? 0;
           enrichTimings.push({
             pr: `${owner}/${repo}#${prNumber}`,
             ms: performance.now() - enrichStart,
-            files: files.length,
+            files: totalFiles,
             reviews: reviews.length,
           });
 
-          const fileShaMap = new Map<string, string>();
-          for (const file of files) {
-            if (file.sha) fileShaMap.set(file.filename, file.sha);
-          }
-
-          const reviewedCount = getReviewedFiles(userId, owner, repo, prNumber, fileShaMap).length;
-
+          const reviewedCount = countReviewedFilesAtHead(userId, owner, repo, prNumber, headSha);
           const approvers = getApprovers(reviews);
 
           return {
             reviewedCount,
-            totalFiles: files.length,
+            totalFiles,
             approved: approvers.includes(login),
             otherApprovers: approvers.filter((l) => l !== login),
           };
@@ -140,7 +139,7 @@ export async function dashboardRoutes(fastify: FastifyInstance) {
                 author: pr.user?.login || 'unknown',
                 updatedAt: pr.updated_at,
                 draft: pr.draft || false,
-                ...(await limit(() => enrichPull(owner, repo.name, pr.number))),
+                ...(await limit(() => enrichPull(owner, repo.name, pr.number, pr.head?.sha || ''))),
               }))
             );
             repoTimings.push({ repo: repoLabel, pullsMs, prCount: pulls.length, enrichMs: performance.now() - enrichStart });

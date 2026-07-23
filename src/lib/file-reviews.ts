@@ -22,6 +22,28 @@ export function getReviewedFiles(
 }
 
 /**
+ * Count files a user has marked reviewed for a PR at a specific head SHA — a cheap,
+ * file-list-free progress figure for summary screens (the dashboard). Unlike
+ * getReviewedFiles it does not validate each blob SHA against the live file list
+ * (which would require fetching every file), so it counts reviews recorded at the
+ * current head. Good enough for an at-a-glance "X / N reviewed" badge.
+ */
+export function countReviewedFilesAtHead(
+  userId: number,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  headSha: string
+): number {
+  const { rows } = query<{ n: number }>(
+    `SELECT COUNT(*) AS n FROM file_reviews
+     WHERE user_id = ? AND owner = ? AND repo = ? AND pr_number = ? AND head_sha = ?`,
+    [userId, owner, repo, prNumber, headSha]
+  );
+  return rows[0]?.n ?? 0;
+}
+
+/**
  * Idempotently mark a file as reviewed. No-op if already reviewed with the same SHA.
  */
 export function markFileReviewed(
