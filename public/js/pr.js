@@ -173,6 +173,49 @@
     return following || unreviewed.find(el => el !== afterEl) || null;
   }
 
+  // Mirror of findNextUnreviewedFile: the last unreviewed file before `beforeEl` in document
+  // order, wrapping around to the last one.
+  function findPrevUnreviewedFile(beforeEl) {
+    const unreviewed = Array.from(document.querySelectorAll('.diff-file:not(.file-reviewed)'));
+    if (unreviewed.length === 0) return null;
+    if (!beforeEl) return unreviewed[unreviewed.length - 1];
+
+    const preceding = unreviewed.filter(el => el !== beforeEl &&
+      (beforeEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_PRECEDING));
+    if (preceding.length > 0) return preceding[preceding.length - 1];
+
+    const others = unreviewed.filter(el => el !== beforeEl);
+    return others.length > 0 ? others[others.length - 1] : null;
+  }
+
+  // The file a keyboard shortcut acts on: whatever was last navigated to, falling back to the
+  // topmost file still visible in the viewport (so `r` works before any explicit navigation).
+  function selectedFile() {
+    const current = document.querySelector('.diff-file.diff-file-current');
+    if (current) return current;
+
+    const files = Array.from(document.querySelectorAll('.diff-file'));
+    const threshold = 10;
+    return files.find(el => el.getBoundingClientRect().bottom > threshold) || files[0] || null;
+  }
+
+  // Shared guard for the single-key shortcuts: ignore keypresses aimed at a form field or at
+  // an open modal/review form, and let modified keystrokes through to the browser.
+  function shortcutBlocked(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return true;
+
+    const tag = document.activeElement?.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+
+    const modal = document.getElementById('goto-file-modal');
+    if (modal && modal.classList.contains('active')) return true;
+
+    const reviewForm = document.getElementById('review-form');
+    if (reviewForm && reviewForm.classList.contains('active')) return true;
+
+    return false;
+  }
+
   function scrollToHash(hash) {
     const el = document.querySelector(hash);
     if (el) {
@@ -242,6 +285,8 @@
     setupFileDeepLinks();
     setupGoToFileModal();
     setupNextUnreviewedShortcut();
+    setupPrevUnreviewedShortcut();
+    setupMarkReviewedShortcut();
     setupCheckUpdatesShortcut();
     setupFullFileToggle();
     setupRenderedToggle();
@@ -1267,6 +1312,56 @@
       }
 
       goToFile(target);
+    });
+  }
+
+  // Previous unreviewed file shortcut
+  function setupPrevUnreviewedShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'p') return;
+      if (shortcutBlocked(e)) return;
+
+      e.preventDefault();
+
+      const unreviewed = Array.from(document.querySelectorAll('.diff-file:not(.file-reviewed)'));
+      if (unreviewed.length === 0) return;
+
+      // Find the last unreviewed file whose top is above the current scroll position
+      const threshold = -10;
+      let target = null;
+      for (const file of unreviewed) {
+        if (file.getBoundingClientRect().top < threshold) {
+          target = file;
+        } else {
+          break;
+        }
+      }
+
+      // Wrap around to the last unreviewed file if none found above
+      if (!target) {
+        target = unreviewed[unreviewed.length - 1];
+      }
+
+      goToFile(target);
+    });
+  }
+
+  // Mark selected file reviewed shortcut. Clicking the checkbox reuses the existing change
+  // handler, which persists the state, collapses the file and advances to the next unreviewed
+  // one.
+  function setupMarkReviewedShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'r') return;
+      if (shortcutBlocked(e)) return;
+
+      const fileEl = selectedFile();
+      if (!fileEl) return;
+
+      const checkbox = fileEl.querySelector('.file-reviewed-toggle');
+      if (!checkbox) return;
+
+      e.preventDefault();
+      checkbox.click();
     });
   }
 
