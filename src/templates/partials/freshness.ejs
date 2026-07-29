@@ -1,0 +1,76 @@
+<%
+  // Shared freshness indicator. Expects `dataFetchedAt` (ISO string) in the render context:
+  // the oldest point at which this page's data was confirmed against GitHub. Pages render
+  // from local cache when it is warm, so without this there is no way to tell how current
+  // what you are looking at actually is.
+%>
+<span class="freshness" data-fetched-at="<%= dataFetchedAt %>">
+  <span class="freshness-age" title="When this data was last confirmed with GitHub">…</span>
+  <a class="freshness-refresh" href="?refresh=1" rel="nofollow"
+     title="Bypass the local cache and fetch the latest from GitHub">Refresh</a>
+</span>
+
+<style>
+  .freshness {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.8125rem;
+    color: #666;
+    white-space: nowrap;
+  }
+  .freshness-age.is-stale { color: #9a6700; }
+  .freshness-refresh {
+    color: #0969da;
+    text-decoration: none;
+    border: 1px solid #d0d7de;
+    border-radius: 6px;
+    padding: 0.125rem 0.5rem;
+    line-height: 1.5;
+  }
+  .freshness-refresh:hover { background: #f3f4f6; text-decoration: none; }
+  .freshness-refresh.is-refreshing { opacity: 0.6; pointer-events: none; }
+</style>
+
+<script>
+  (function () {
+    var root = document.currentScript.previousElementSibling;
+    while (root && !root.classList.contains('freshness')) root = root.previousElementSibling;
+    if (!root) return;
+
+    var ageEl = root.querySelector('.freshness-age');
+    var refreshEl = root.querySelector('.freshness-refresh');
+    var fetchedAt = new Date(root.dataset.fetchedAt);
+    if (isNaN(fetchedAt.getTime())) { root.style.display = 'none'; return; }
+
+    // Preserve the query string already on the page (tab, revision, whitespace mode) so
+    // Refresh reloads the same view rather than resetting it.
+    var url = new URL(window.location.href);
+    url.searchParams.set('refresh', '1');
+    refreshEl.href = url.pathname + url.search + url.hash;
+
+    function render() {
+      var seconds = Math.max(0, Math.round((Date.now() - fetchedAt.getTime()) / 1000));
+      var text;
+      if (seconds < 10) text = 'just now';
+      else if (seconds < 60) text = seconds + 's ago';
+      else if (seconds < 3600) text = Math.floor(seconds / 60) + 'm ago';
+      else if (seconds < 86400) text = Math.floor(seconds / 3600) + 'h ago';
+      else text = Math.floor(seconds / 86400) + 'd ago';
+
+      ageEl.textContent = 'Updated ' + text;
+      ageEl.title = 'Last confirmed with GitHub at ' + fetchedAt.toLocaleString();
+      // Past a few minutes the page is being served from cache while a background
+      // revalidation runs; flag it so the staleness is visible rather than implied.
+      ageEl.classList.toggle('is-stale', seconds > 300);
+    }
+
+    render();
+    setInterval(render, 15000);
+
+    refreshEl.addEventListener('click', function () {
+      refreshEl.classList.add('is-refreshing');
+      refreshEl.textContent = 'Refreshing…';
+    });
+  })();
+</script>

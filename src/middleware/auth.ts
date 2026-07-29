@@ -54,6 +54,11 @@ export async function initTokenAuth(): Promise<void> {
   }
 }
 
+/** The authenticated token user, for background jobs that have no request context. */
+export function getTokenUser(): User | null {
+  return tokenUser;
+}
+
 export async function authMiddleware(
   request: FastifyRequest,
   _reply: FastifyReply

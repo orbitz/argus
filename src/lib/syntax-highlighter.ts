@@ -87,8 +87,66 @@ export function detectLanguage(filePath: string): string | null {
   return languageMap[ext] || null;
 }
 
+// Shiki's FontStyle bitflags (not exported from the package root).
+const FONT_STYLE_ITALIC = 1;
+const FONT_STYLE_BOLD = 2;
+const FONT_STYLE_UNDERLINE = 4;
+
+function tokenStyle(color: string | undefined, fontStyle: number | undefined): string {
+  const parts: string[] = [];
+  if (color) parts.push(`color:${color}`);
+  if (fontStyle && fontStyle > 0) {
+    if (fontStyle & FONT_STYLE_ITALIC) parts.push('font-style:italic');
+    if (fontStyle & FONT_STYLE_BOLD) parts.push('font-weight:bold');
+    if (fontStyle & FONT_STYLE_UNDERLINE) parts.push('text-decoration:underline');
+  }
+  return parts.join(';');
+}
+
 /**
- * Highlight code using Shiki (returns HTML with inline styles)
+ * Highlight many lines in a single Shiki pass, returning one HTML string per input line.
+ *
+ * This replaces a per-line codeToHtml() call, which was both the dominant CPU cost of
+ * rendering a diff and *less accurate*: tokenizing each line in isolation gives the
+ * grammar no context, so multi-line strings, template literals and block comments were
+ * highlighted wrongly. Tokenizing the whole side of the diff at once fixes both.
+ */
+export async function highlightLines(lines: string[], lang: string): Promise<string[]> {
+  if (lines.length === 0) return [];
+
+  try {
+    const highlighter = await getHighlighterInstance();
+    if (!highlighter.getLoadedLanguages().includes(lang as any)) {
+      return lines.map(escapeHtml);
+    }
+
+    const { tokens } = highlighter.codeToTokens(lines.join('\n'), {
+      lang: lang as any,
+      theme: 'github-light',
+    });
+
+    // codeToTokens yields one token array per line (empty array for a blank line).
+    return lines.map((line, i) => {
+      const lineTokens = tokens[i];
+      if (!lineTokens) return escapeHtml(line); // defensive: line-count mismatch
+      return lineTokens
+        .map((t) => {
+          const style = tokenStyle(t.color, t.fontStyle);
+          const content = escapeHtml(t.content);
+          return style ? `<span style="${style}">${content}</span>` : content;
+        })
+        .join('');
+    });
+  } catch (err) {
+    console.error('Batch syntax highlighting failed:', err);
+    return lines.map(escapeHtml);
+  }
+}
+
+/**
+ * Highlight code using Shiki (returns HTML with inline styles).
+ * Still used for fenced code blocks in rendered markdown, where each block is a
+ * self-contained document.
  */
 export async function highlightCode(code: string, lang: string): Promise<string> {
   try {

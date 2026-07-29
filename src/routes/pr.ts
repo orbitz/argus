@@ -23,9 +23,10 @@ import {
   fetchFileContent,
   fetchFileBuffer,
 } from '../lib/github.js';
+import { invalidateCache, prCacheKeys, getFetchedAt, type CacheMode } from '../lib/api-cache.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
-import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug } from '../lib/diff-renderer.js';
+import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable } from '../lib/diff-renderer.js';
 import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
@@ -69,30 +70,61 @@ export async function prRoutes(fastify: FastifyInstance) {
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
 
+        // --- Performance instrumentation (mirrors the dashboard's breakdown) ---
+        const perfStart = performance.now();
+        const perf: Record<string, number> = {};
+        const span = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
+          const t = performance.now();
+          try {
+            return await work();
+          } finally {
+            perf[name] = Math.round(performance.now() - t);
+          }
+        };
+
+        // ?refresh=1 (the Refresh button) bypasses the local cache for this request.
+        const cacheMode: CacheMode =
+          (request.query as { refresh?: string }).refresh === '1' ? 'bypass' : 'normal';
+
         // Fetch PR data in parallel. Checks and combined status only need the head SHA,
         // so chain them off the PR fetch — they start the moment fetchPR resolves and
         // overlap with the rest of the batch instead of waiting for a second round-trip.
         // Both degrade to empty on failure (a PR may have no checks/statuses).
-        const prPromise = fetchPR(octokit, owner, repo, prNumber);
+        const prPromise = fetchPR(octokit, owner, repo, prNumber, cacheMode);
         const checksPromise = prPromise
-          .then((pr) => fetchChecks(octokit, owner, repo, pr.head.sha))
+          .then((pr) => fetchChecks(octokit, owner, repo, pr.head.sha, cacheMode))
           .catch(() => [] as any[]);
         const statusPromise = prPromise
-          .then((pr) => fetchCombinedStatus(octokit, owner, repo, pr.head.sha))
+          .then((pr) => fetchCombinedStatus(octokit, owner, repo, pr.head.sha, cacheMode))
           .catch(() => ({ state: 'unknown', statuses: [] as any[] }));
 
         const [pr, files, issueComments, reviewComments, reviews, commits, timeline, checks, combinedStatus] =
-          await Promise.all([
-            prPromise,
-            fetchPRFiles(octokit, owner, repo, prNumber),
-            fetchIssueComments(octokit, owner, repo, prNumber),
-            fetchReviewComments(octokit, owner, repo, prNumber),
-            fetchReviews(octokit, owner, repo, prNumber),
-            fetchPRCommits(octokit, owner, repo, prNumber),
-            fetchPRTimeline(octokit, owner, repo, prNumber),
-            checksPromise,
-            statusPromise,
-          ]);
+          await span('apiMs', () =>
+            Promise.all([
+              prPromise,
+              fetchPRFiles(octokit, owner, repo, prNumber, cacheMode),
+              fetchIssueComments(octokit, owner, repo, prNumber, cacheMode),
+              fetchReviewComments(octokit, owner, repo, prNumber, cacheMode),
+              fetchReviews(octokit, owner, repo, prNumber, cacheMode),
+              fetchPRCommits(octokit, owner, repo, prNumber, cacheMode),
+              fetchPRTimeline(octokit, owner, repo, prNumber, cacheMode),
+              checksPromise,
+              statusPromise,
+            ])
+          );
+
+        // Render each inline comment's markdown exactly once. It is needed both for the
+        // per-file grouping below and for the conversation tab; rendering it twice per
+        // request was pure duplicated CPU. Rendering in parallel also beats the old
+        // sequential await-inside-a-loop.
+        const renderedCommentBodies = await span('commentMarkdownMs', async () => {
+          const entries = await Promise.all(
+            reviewComments.map(
+              async (c) => [c.id, await renderMarkdown(c.body || '')] as const
+            )
+          );
+          return new Map<number, string>(entries);
+        });
 
         // Group review comments by file path with rendered markdown
         type CommentWithRenderedBody = (typeof reviewComments)[0] & { renderedBody: string };
@@ -107,7 +139,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
           commentsByFile.get(path)!.push({
             ...comment,
-            renderedBody: await renderMarkdown(comment.body),
+            renderedBody: renderedCommentBodies.get(comment.id) ?? '',
           });
           if (path) commentFiles[comment.id] = fileSlug(path);
         }
@@ -143,16 +175,18 @@ export async function prRoutes(fastify: FastifyInstance) {
 
         // Backfill all historical revisions from GitHub timeline (reuse the timeline
         // already fetched above instead of fetching it a second time).
-        await backfillRevisions(
-          owner,
-          repo,
-          prNumber,
-          pr.base.ref,
-          pr.base.sha,
-          pr.head.ref,
-          pr.head.sha,
-          request.user!.accessToken,
-          timeline
+        await span('backfillMs', () =>
+          backfillRevisions(
+            owner,
+            repo,
+            prNumber,
+            pr.base.ref,
+            pr.base.sha,
+            pr.head.ref,
+            pr.head.sha,
+            request.user!.accessToken,
+            timeline
+          )
         );
 
         // Get all seen revisions
@@ -270,9 +304,36 @@ export async function prRoutes(fastify: FastifyInstance) {
         // standard current-revision view and the whitespace-hidden view (the lazy endpoint
         // recomputes the whitespace-ignored per-file diff when ?w=1). Historical and
         // cross-revision views still render eagerly (no per-file lazy endpoint for those).
+        const changedLineCount = filesToRender.reduce(
+          (sum, f) => sum + (f.additions || 0) + (f.deletions || 0),
+          0
+        );
         const lazyDiffs =
           !isHistoricalView && !isCrossRevisionView &&
-          filesToRender.length > config.diff.lazyFileThreshold;
+          (filesToRender.length > config.diff.lazyFileThreshold ||
+            changedLineCount > config.diff.lazyLineThreshold);
+
+        const diffRenderStart = performance.now();
+
+        // Rendered diff tables are cached by (head SHA, path) and shared with the lazy
+        // /file-diff endpoint. Syntax highlighting costs roughly half a millisecond per
+        // line, so on a repeat load this is the difference between seconds and nothing.
+        // Only valid for the standard current-revision view: historical and
+        // cross-revision views render different content, and ?w=1 a different patch.
+        const canUseDiffCache =
+          !hideWhitespace && !isHistoricalView && !isCrossRevisionView;
+        const cachedTables = new Map<string, string>();
+        if (canUseDiffCache) {
+          // One query for the whole PR rather than one per file.
+          const { rows } = query<{ file_path: string; rendered_html: string }>(
+            `SELECT file_path, rendered_html FROM diff_cache
+             WHERE owner = ? AND repo = ? AND head_sha = ? AND highlighted = ?
+               AND rendered_html IS NOT NULL`,
+            [owner, repo, pr.head.sha, enableHighlighting ? 1 : 0]
+          );
+          for (const row of rows) cachedTables.set(row.file_path, row.rendered_html);
+        }
+        let diffCacheHits = 0;
 
         for (let i = 0; i < filesToRender.length; i++) {
           const file = filesToRender[i];
@@ -309,20 +370,51 @@ export async function prRoutes(fastify: FastifyInstance) {
           const slug = fileSlug(file.filename);
           const fileSha = file.sha || fileShaMap.get(file.filename) || '';
           const isReviewed = reviewedFilesSet.has(file.filename);
-          const renderedHtml = lazyDiffs
-            ? renderFileShell(parsedFile, slug, pr.head.sha, isReviewed, enableHighlighting, fileSha)
-            : await renderFile(
-                parsedFile,
-                slug,
-                pr.head.sha,
-                owner,
-                repo,
-                prNumber,
-                fileComments,
-                isReviewed,
-                enableHighlighting,
-                fileSha
-              );
+
+          // Cached tables are comment-free by construction (see the write below), so they
+          // may only be reused for files that currently have no inline comments.
+          const cacheableFile = canUseDiffCache && fileComments.length === 0;
+          const cachedTable = cacheableFile ? cachedTables.get(file.filename) : undefined;
+
+          let renderedHtml: string;
+          if (lazyDiffs) {
+            renderedHtml = renderFileShell(
+              parsedFile, slug, pr.head.sha, isReviewed, enableHighlighting, fileSha
+            );
+          } else if (cachedTable) {
+            diffCacheHits++;
+            renderedHtml = wrapCachedFileTable(
+              parsedFile, slug, isReviewed, enableHighlighting, fileSha, pr.head.sha, cachedTable
+            );
+          } else {
+            renderedHtml = await renderFile(
+              parsedFile,
+              slug,
+              pr.head.sha,
+              owner,
+              repo,
+              prNumber,
+              fileComments,
+              isReviewed,
+              enableHighlighting,
+              fileSha
+            );
+
+            if (cacheableFile) {
+              const table = extractDiffTable(renderedHtml);
+              if (table) {
+                query(
+                  `INSERT OR REPLACE INTO diff_cache
+                     (owner, repo, head_sha, file_path, highlighted, diff_data, rendered_html, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+                  [
+                    owner, repo, pr.head.sha, file.filename,
+                    enableHighlighting ? 1 : 0, file.patch, table,
+                  ]
+                );
+              }
+            }
+          }
           parsedFiles.push({
             file: parsedFile,
             path: file.filename,
@@ -334,6 +426,8 @@ export async function prRoutes(fastify: FastifyInstance) {
             commentCount: fileComments.length,
           });
         }
+
+        perf.diffRenderMs = Math.round(performance.now() - diffRenderStart);
 
         // Build directory tree from files
         const fileTree = buildFileTree(parsedFiles);
@@ -356,8 +450,34 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Render PR body as markdown
         const renderedBody = await renderMarkdown(pr.body);
 
+        // Freshness: the oldest confirmation time across this page's cached resources is
+        // what the "Updated Xm ago" indicator reports — it's the honest figure, since the
+        // page is only as current as its stalest part.
+        const freshnessTimes = prCacheKeys(owner, repo, prNumber)
+          .map(getFetchedAt)
+          .filter((d): d is Date => d !== null);
+        const dataFetchedAt =
+          freshnessTimes.length > 0
+            ? new Date(Math.min(...freshnessTimes.map((d) => d.getTime()))).toISOString()
+            : new Date().toISOString();
+
         // Get current timestamp
         const fetchedAt = new Date().toISOString();
+
+        request.log.info(
+          {
+            pr: `${owner}/${repo}#${prNumber}`,
+            totalMs: Math.round(performance.now() - perfStart),
+            files: files.length,
+            reviewComments: reviewComments.length,
+            lazyDiffs,
+            diffCacheHits,
+            diffsRendered: lazyDiffs ? 0 : filesToRender.length - diffCacheHits,
+            refresh: cacheMode === 'bypass',
+            ...perf,
+          },
+          'pr performance breakdown'
+        );
 
         return reply.view('pr', {
           title: `#${prNumber} ${pr.title} - Argus`,
@@ -376,11 +496,11 @@ export async function prRoutes(fastify: FastifyInstance) {
             ...c,
             renderedBody: await renderMarkdown(c.body),
           }))),
-          reviewComments: await Promise.all(reviewComments.map(async (c) => ({
+          reviewComments: reviewComments.map((c) => ({
             ...c,
-            renderedBody: await renderMarkdown(c.body || ''),
+            renderedBody: renderedCommentBodies.get(c.id) ?? '',
             renderedHunk: c.diff_hunk ? renderSimpleHunk(parseHunkString(c.diff_hunk)) : '',
-          }))),
+          })),
           reviews: await Promise.all(reviews.map(async (r) => ({
             ...r,
             renderedBody: await renderMarkdown(r.body),
@@ -398,6 +518,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           isCurrentRevisionExplicit,
           commits,
           fetchedAt,
+          dataFetchedAt,
           inlineCommentFormTemplate: renderInlineCommentForm(),
           pollIntervalMs: config.ui.pollIntervalMs,
           config,
@@ -455,7 +576,11 @@ export async function prRoutes(fastify: FastifyInstance) {
 
       try {
         const octokit = createUserOctokit(request.user.accessToken);
-        const { headSha, updatedAt } = await fetchHeadSha(octokit, owner, repo, prNumber);
+        // This endpoint exists purely to detect that the PR moved, so it must not be
+        // answered from cache: a stale-then-revalidate read would delay the "PR updated"
+        // banner by a full poll cycle. The in-flight dedup in the cache layer still
+        // collapses simultaneous polls from multiple tabs into one request.
+        const { headSha, updatedAt } = await fetchHeadSha(octokit, owner, repo, prNumber, 'bypass');
 
         return reply.send({
           head_sha: headSha,
@@ -495,6 +620,7 @@ export async function prRoutes(fastify: FastifyInstance) {
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
         await postComment(octokit, owner, repo, prNumber, body.trim());
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
 
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=conversation`);
       } catch (err: any) {
@@ -552,6 +678,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           event as 'APPROVE' | 'REQUEST_CHANGES' | 'COMMENT',
           body?.trim()
         );
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
 
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=files`);
       } catch (err: any) {
@@ -609,6 +736,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           lineNum,
           (side as 'LEFT' | 'RIGHT') || 'RIGHT'
         );
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
 
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=files#comment-${commentId}`);
       } catch (err: any) {
@@ -657,6 +785,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           commentId,
           body.trim()
         );
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
 
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=conversation`);
       } catch (err: any) {
@@ -829,6 +958,18 @@ export async function prRoutes(fastify: FastifyInstance) {
         const pr = await fetchPR(octokit, owner, repo, prNumber);
         const headSha = pr.head.sha;
 
+        // Syntax highlighting preference (default: true), matching the page render. Read
+        // before the cache lookup because the rendered HTML differs by this flag and the
+        // cache is keyed on it.
+        let enableHighlighting = true;
+        const { rows: prefRows } = query<{ preference_value: string }>(
+          `SELECT preference_value FROM user_preferences WHERE user_id = ? AND preference_key = ?`,
+          [request.user.githubUserId, `syntax_${owner}/${repo}`]
+        );
+        if (prefRows.length > 0) {
+          enableHighlighting = prefRows[0].preference_value === '1';
+        }
+
         // The diff_cache stores the standard (whitespace-included) render keyed by head SHA +
         // path, so it is only valid for the non-whitespace view — skip it entirely for ?w=1.
         if (!hideWhitespace) {
@@ -838,8 +979,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           const cached = query<{ rendered_html: string | null }>(
             `SELECT rendered_html FROM diff_cache
              WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
-               AND rendered_html IS NOT NULL`,
-            [owner, repo, headSha, filePath]
+               AND highlighted = ? AND rendered_html IS NOT NULL`,
+            [owner, repo, headSha, filePath, enableHighlighting ? 1 : 0]
           );
           if (cached.rows.length > 0 && cached.rows[0].rendered_html) {
             return reply.send({ html: cached.rows[0].rendered_html });
@@ -880,16 +1021,6 @@ export async function prRoutes(fastify: FastifyInstance) {
           return reply.send({ html: '<div class="diff-binary-notice">Binary file not shown</div>' });
         }
 
-        // Syntax highlighting preference (default: true), matching the page render.
-        let enableHighlighting = true;
-        const { rows: prefRows } = query<{ preference_value: string }>(
-          `SELECT preference_value FROM user_preferences WHERE user_id = ? AND preference_key = ?`,
-          [request.user.githubUserId, `syntax_${owner}/${repo}`]
-        );
-        if (prefRows.length > 0) {
-          enableHighlighting = prefRows[0].preference_value === '1';
-        }
-
         // Inline comments for this file.
         const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
         const fileComments = await Promise.all(
@@ -913,9 +1044,10 @@ export async function prRoutes(fastify: FastifyInstance) {
         // not by comment state or whitespace mode). Re-expanding such a file is then instant.
         if (!hideWhitespace && fileComments.length === 0) {
           query(
-            `INSERT OR REPLACE INTO diff_cache (owner, repo, head_sha, file_path, diff_data, rendered_html, fetched_at)
-             VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`,
-            [owner, repo, headSha, filePath, patch, tableHtml]
+            `INSERT OR REPLACE INTO diff_cache
+               (owner, repo, head_sha, file_path, highlighted, diff_data, rendered_html, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            [owner, repo, headSha, filePath, enableHighlighting ? 1 : 0, patch, tableHtml]
           );
         }
 
@@ -1460,6 +1592,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           commit_message,
           merge_method
         );
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
 
         if (!result.merged) {
           return reply.view('error', {
@@ -1629,8 +1762,6 @@ async function backfillRevisions(
         rev.timestamp
       );
     }
-
-    console.log(`Backfilled ${revisions.length} revisions for PR #${prNumber}`);
   } catch (err) {
     console.error('Failed to backfill revisions:', err);
     // Continue - backfill is optional
