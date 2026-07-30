@@ -1,5 +1,15 @@
-import { DiffFile, DiffLine, DiffHunk, parseHunkString } from './diff-parser.js';
-import { detectLanguage, highlightLines } from './syntax-highlighter.js';
+import { DiffFile, DiffLine, DiffHunk, parseHunkString, parsePatch } from './diff-parser.js';
+import { detectLanguage, highlightLines, highlightSource } from './syntax-highlighter.js';
+
+/**
+ * The complete text of both sides of a file, used purely as syntax-highlighting context.
+ *
+ * Never rendered — the reader still sees only the diff's own hunks. See buildHighlightMap.
+ */
+export interface FileSources {
+  oldSource: string;
+  newSource: string;
+}
 
 // Convert a file path to a URL-safe slug for stable deep linking
 export function fileSlug(path: string): string {
@@ -32,21 +42,47 @@ const LINE_TYPE_PREFIXES: Record<ContentLineType, string> = {
 };
 
 /**
- * Highlight every line of a file in one pass, keyed by line identity.
+ * Does every line of this hunk sit at the line number the sources say it does?
  *
- * The two sides of a diff are tokenized separately: interleaving added and deleted lines
- * would feed the grammar a document that never existed (both versions of a changed line
- * back to back), which corrupts stateful constructs like block comments. Deletions plus
- * context reconstruct the old file; additions plus context reconstruct the new one.
+ * Cheap insurance against feeding the highlighter a file that does not match the patch:
+ * a merge-base skew, or the synthetic hunks injectOrphanedCommentHunks rebuilds from a
+ * comment's stale `diff_hunk`. Checking each line's text against the source at its own line
+ * number catches all of that before a single wrong colour is emitted.
  */
-async function buildHighlightMap(
-  hunks: DiffHunk[],
-  language: string
-): Promise<Map<DiffLine, string>> {
-  const oldLines: DiffLine[] = [];
-  const newLines: DiffLine[] = [];
+function hunkAlignsWithSources(
+  hunk: DiffHunk,
+  oldSrc: string[],
+  newSrc: string[]
+): boolean {
+  for (const line of hunk.lines) {
+    if (line.type === 'del') {
+      if (line.oldLineNum === null || oldSrc[line.oldLineNum - 1] !== line.content) return false;
+    } else {
+      if (line.newLineNum === null || newSrc[line.newLineNum - 1] !== line.content) return false;
+    }
+  }
+  return true;
+}
 
-  for (const hunk of hunks) {
+/**
+ * Highlight hunks in isolation, one Shiki pass per hunk per side.
+ *
+ * The fallback for when the real file isn't available. Grammar state still can't be right
+ * for a hunk that opens inside a construct started above it, but confining each pass to one
+ * hunk means state cannot leak *across* the elided gap between hunks — which is the failure
+ * that turns the whole rest of a file into one comment.
+ */
+async function addIsolatedHunkHighlighting(
+  hunks: DiffHunk[],
+  language: string,
+  map: Map<DiffLine, string>
+): Promise<void> {
+  await Promise.all(hunks.map(async (hunk) => {
+    // The two sides are tokenized separately: interleaving added and deleted lines would
+    // feed the grammar a document that never existed (both versions of a changed line back
+    // to back). Deletions plus context are the old file, additions plus context the new one.
+    const oldLines: DiffLine[] = [];
+    const newLines: DiffLine[] = [];
     for (const line of hunk.lines) {
       if (line.type === 'del') oldLines.push(line);
       else if (line.type === 'add') newLines.push(line);
@@ -55,19 +91,103 @@ async function buildHighlightMap(
         newLines.push(line);
       }
     }
+
+    const [oldHtml, newHtml] = await Promise.all([
+      highlightLines(oldLines.map((l) => l.content), language),
+      highlightLines(newLines.map((l) => l.content), language),
+    ]);
+
+    // Context lines appear in both passes; the new side wins (they are identical anyway,
+    // but the new side's surrounding context is the one the reader is looking at).
+    oldLines.forEach((line, i) => map.set(line, oldHtml[i]));
+    newLines.forEach((line, i) => map.set(line, newHtml[i]));
+  }));
+}
+
+/**
+ * Highlight every line of a file, keyed by line identity.
+ *
+ * Given the file's real contents, each side is tokenized once as a whole document and every
+ * diff line takes the colours of its own line number. That is the only way to get this
+ * right: a diff is a set of excerpts, so tokenizing the excerpts — however many at a time —
+ * hides whatever the elided regions contain. A block comment opened in one hunk and closed
+ * in the gap below it would otherwise never close, and every hunk after it comes back
+ * coloured as comment.
+ *
+ * Hunks the sources don't corroborate, and every hunk when there are no sources, fall back
+ * to isolated per-hunk highlighting.
+ */
+async function buildHighlightMap(
+  hunks: DiffHunk[],
+  language: string,
+  sources?: FileSources
+): Promise<Map<DiffLine, string>> {
+  const oldSrc = sources ? sources.oldSource.split('\n') : null;
+  const newSrc = sources ? sources.newSource.split('\n') : null;
+
+  const aligned: DiffHunk[] = [];
+  const isolated: DiffHunk[] = [];
+  for (const hunk of hunks) {
+    if (oldSrc && newSrc && hunkAlignsWithSources(hunk, oldSrc, newSrc)) aligned.push(hunk);
+    else isolated.push(hunk);
   }
 
-  const [oldHtml, newHtml] = await Promise.all([
-    highlightLines(oldLines.map((l) => l.content), language),
-    highlightLines(newLines.map((l) => l.content), language),
-  ]);
-
   const map = new Map<DiffLine, string>();
-  // Context lines appear in both passes; the new side wins (they are identical anyway,
-  // but the new side's surrounding context is the one the reader is looking at).
-  oldLines.forEach((line, i) => map.set(line, oldHtml[i]));
-  newLines.forEach((line, i) => map.set(line, newHtml[i]));
+
+  if (aligned.length > 0 && sources) {
+    const [oldHtml, newHtml] = await Promise.all([
+      highlightSource(sources.oldSource, language),
+      highlightSource(sources.newSource, language),
+    ]);
+
+    for (const hunk of aligned) {
+      for (const line of hunk.lines) {
+        const html = line.type === 'del'
+          ? (line.oldLineNum === null ? undefined : oldHtml[line.oldLineNum - 1])
+          : (line.newLineNum === null ? undefined : newHtml[line.newLineNum - 1]);
+        // A miss leaves the line out of the map; renderLine escapes it plainly.
+        if (html !== undefined) map.set(line, html);
+      }
+    }
+  }
+
+  if (isolated.length > 0) {
+    await addIsolatedHunkHighlighting(isolated, language, map);
+  }
+
   return map;
+}
+
+/**
+ * Reconstruct both complete sides of a file from a full-context (`-U99999`) patch.
+ *
+ * With no elided regions, deletions plus context are the entire old file and additions plus
+ * context the entire new one. Returns null if the patch has hunks that skip lines, i.e. it
+ * wasn't produced with full context after all — highlighting against a file with holes in it
+ * is exactly the bug this exists to avoid.
+ */
+export function sourcesFromFullContextPatch(patch: string): FileSources | null {
+  const parsed = parsePatch(patch, '', 'modified');
+  const oldLines: string[] = [];
+  const newLines: string[] = [];
+
+  // A side with a zero count (a created or deleted file) has no line to be contiguous with,
+  // so only a non-empty side is held to starting where the previous hunk left off.
+  let expectedOld = 1;
+  let expectedNew = 1;
+  for (const hunk of parsed.hunks) {
+    if (hunk.oldCount > 0 && hunk.oldStart !== expectedOld) return null;
+    if (hunk.newCount > 0 && hunk.newStart !== expectedNew) return null;
+    for (const line of hunk.lines) {
+      if (line.type !== 'add') oldLines.push(line.content);
+      if (line.type !== 'del') newLines.push(line.content);
+    }
+    if (hunk.oldCount > 0) expectedOld = hunk.oldStart + hunk.oldCount;
+    if (hunk.newCount > 0) expectedNew = hunk.newStart + hunk.newCount;
+  }
+
+  if (oldLines.length === 0 && newLines.length === 0) return null;
+  return { oldSource: oldLines.join('\n'), newSource: newLines.join('\n') };
 }
 
 // Render a single diff line
@@ -321,7 +441,8 @@ export async function renderFile(
   }> = [],
   isReviewed: boolean = false,
   enableHighlighting: boolean = false,
-  fileSha: string = ''
+  fileSha: string = '',
+  sources?: FileSources
 ): Promise<string> {
   const path = file.newPath || file.oldPath;
   const filename = path.split('/').pop() || path;
@@ -424,7 +545,9 @@ export async function renderFile(
 
   // One Shiki pass for the entire file, instead of one per line.
   const highlighted =
-    enableHighlighting && language ? await buildHighlightMap(mergedHunks, language) : null;
+    enableHighlighting && language
+      ? await buildHighlightMap(mergedHunks, language, sources)
+      : null;
 
   // Render diff table
   let tableRows = '';

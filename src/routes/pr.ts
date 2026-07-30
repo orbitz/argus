@@ -26,11 +26,11 @@ import {
 import { invalidateCache, prCacheKeys, getFetchedAt, type CacheMode } from '../lib/api-cache.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
-import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable } from '../lib/diff-renderer.js';
+import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
 import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
-import { computeMergeBase, computeRangeDiff, computeCrossDiff, computeCrossRevisionDiff, getFullFileDiff } from '../lib/git.js';
+import { computeMergeBase, computeRangeDiff, computeCrossDiff, computeCrossRevisionDiff, getFullFileDiff, getFullContextPatches } from '../lib/git.js';
 import { getReviewedFiles, toggleFileReview, markFileReviewed, markFileUnreviewed } from '../lib/file-reviews.js';
 import { buildFileTree } from '../lib/file-tree-builder.js';
 
@@ -335,6 +335,45 @@ export async function prRoutes(fastify: FastifyInstance) {
         }
         let diffCacheHits = 0;
 
+        // Syntax highlighting is only correct when the grammar sees each file whole: a diff
+        // hides whatever sits between its hunks, so a block comment closed in an elided
+        // region never closes and every hunk below it comes back coloured as comment. One
+        // git call for the whole PR supplies the real contents (see getFullContextPatches).
+        // Skipped for historical and cross-revision views, whose patches are against a
+        // different base. Any failure here is silent: highlighting falls back to per-hunk.
+        const fullContextSources = new Map<string, FileSources>();
+        const wantsSources =
+          enableHighlighting && !lazyDiffs && !isHistoricalView && !isCrossRevisionView;
+        if (wantsSources) {
+          const needSources = filesToRender
+            .filter((f) => {
+              if (!f.patch) return false;
+              const hasComments = (commentsByFile.get(f.filename)?.length || 0) > 0;
+              const cacheable = canUseDiffCache && !hasComments;
+              return !(cacheable && cachedTables.has(f.filename));
+            })
+            .map((f) => f.filename);
+
+          if (needSources.length > 0) {
+            try {
+              const mergeBase = await computeMergeBase(
+                owner, repo, pr.base.sha, pr.head.sha, request.user!.accessToken
+              );
+              const patches = await getFullContextPatches(
+                owner, repo, mergeBase, pr.head.sha, request.user!.accessToken, needSources
+              );
+              for (const path of needSources) {
+                const patch = patches.get(path);
+                if (!patch) continue;
+                const sources = sourcesFromFullContextPatch(patch);
+                if (sources) fullContextSources.set(path, sources);
+              }
+            } catch (err: any) {
+              console.error('Failed to load full-file context for highlighting:', err.message);
+            }
+          }
+        }
+
         for (let i = 0; i < filesToRender.length; i++) {
           const file = filesToRender[i];
           const fileComments = (isHistoricalView || isCrossRevisionView) ? [] : (commentsByFile.get(file.filename) || []);
@@ -397,7 +436,8 @@ export async function prRoutes(fastify: FastifyInstance) {
               fileComments,
               isReviewed,
               enableHighlighting,
-              fileSha
+              fileSha,
+              fullContextSources.get(file.filename)
             );
 
             if (cacheableFile) {
@@ -1029,11 +1069,29 @@ export async function prRoutes(fastify: FastifyInstance) {
             .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
         );
 
+        // The file's real contents, so constructs closed in an elided region still close.
+        // Best-effort: without it renderFile highlights each hunk in isolation.
+        let sources: FileSources | undefined;
+        if (enableHighlighting) {
+          try {
+            const mergeBase = await computeMergeBase(
+              owner, repo, pr.base.sha, headSha, request.user.accessToken
+            );
+            const patches = await getFullContextPatches(
+              owner, repo, mergeBase, headSha, request.user.accessToken, [filePath]
+            );
+            const fullPatch = patches.get(filePath);
+            if (fullPatch) sources = sourcesFromFullContextPatch(fullPatch) || undefined;
+          } catch (err: any) {
+            console.error('Failed to load full-file context for highlighting:', err.message);
+          }
+        }
+
         const parsedFile = parsePatch(patch, filePath, status);
         const slug = fileSlug(filePath);
         const renderedHtml = await renderFile(
           parsedFile, slug, headSha, owner, repo, prNumber, fileComments, false,
-          enableHighlighting, fileSha
+          enableHighlighting, fileSha, sources
         );
 
         // Extract just the <table> to inject into the file's existing .diff-content.
@@ -1114,10 +1172,23 @@ export async function prRoutes(fastify: FastifyInstance) {
             }))
         );
 
+        // Syntax highlighting preference (default: true), matching the page render.
+        let enableHighlighting = true;
+        const { rows: prefRows } = query<{ preference_value: string }>(
+          `SELECT preference_value FROM user_preferences WHERE user_id = ? AND preference_key = ?`,
+          [request.user.githubUserId, `syntax_${owner}/${repo}`]
+        );
+        if (prefRows.length > 0) {
+          enableHighlighting = prefRows[0].preference_value === '1';
+        }
+
         const parsedFile = parsePatch(patch, filePath, 'modified');
         const slug = fileSlug(filePath);
+        // This patch is already -U99999, so it *is* the whole file — no second git call.
+        const sources = sourcesFromFullContextPatch(patch) || undefined;
         const renderedHtml = await renderFile(
-          parsedFile, slug, pr.head.sha, owner, repo, prNumber, fileComments, false, false
+          parsedFile, slug, pr.head.sha, owner, repo, prNumber, fileComments, false,
+          enableHighlighting, '', sources
         );
 
         // Extract just the diff-table content from the rendered HTML

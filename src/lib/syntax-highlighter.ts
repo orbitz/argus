@@ -109,7 +109,14 @@ function tokenStyle(color: string | undefined, fontStyle: number | undefined): s
  * This replaces a per-line codeToHtml() call, which was both the dominant CPU cost of
  * rendering a diff and *less accurate*: tokenizing each line in isolation gives the
  * grammar no context, so multi-line strings, template literals and block comments were
- * highlighted wrongly. Tokenizing the whole side of the diff at once fixes both.
+ * highlighted wrongly.
+ *
+ * The lines are tokenized as one contiguous document, so callers must only pass lines that
+ * really are contiguous in the source. Handing this the concatenation of several diff hunks
+ * makes the grammar step straight over the elided regions between them: a block comment
+ * opened in one hunk and closed in the gap never gets closed, and every following hunk comes
+ * back coloured as comment. Prefer highlightSource() with the real file whenever it is
+ * available; use this only for a single contiguous run.
  */
 export async function highlightLines(lines: string[], lang: string): Promise<string[]> {
   if (lines.length === 0) return [];
@@ -144,41 +151,15 @@ export async function highlightLines(lines: string[], lang: string): Promise<str
 }
 
 /**
- * Highlight code using Shiki (returns HTML with inline styles).
- * Still used for fenced code blocks in rendered markdown, where each block is a
- * self-contained document.
+ * Highlight a whole source file, returning one HTML string per line, indexable by
+ * (1-based line number - 1).
+ *
+ * Unlike highlightLines this is guaranteed gap-free, which is the whole point: it is the
+ * only way to colour a diff line the way it would look in the real file, both for a
+ * construct whose terminator was elided and for a hunk that starts inside one.
  */
-export async function highlightCode(code: string, lang: string): Promise<string> {
-  try {
-    const highlighter = await getHighlighterInstance();
-
-    // Check if language is supported
-    const loadedLanguages = highlighter.getLoadedLanguages();
-    if (!loadedLanguages.includes(lang as any)) {
-      // Language not supported, return escaped code
-      return escapeHtml(code);
-    }
-
-    // Use codeToHtml with inline styles
-    const html = highlighter.codeToHtml(code, {
-      lang,
-      theme: 'github-light',
-    });
-
-    // Extract just the code content (remove pre/code wrapper tags)
-    // The codeToHtml returns: <pre class="..."><code>...</code></pre>
-    // We just want the inner content with spans
-    const match = html.match(/<code[^>]*>([\s\S]*?)<\/code>/);
-    if (match && match[1]) {
-      // Remove line breaks that Shiki adds, we handle lines ourselves
-      return match[1].replace(/\n/g, '');
-    }
-
-    return escapeHtml(code);
-  } catch (err) {
-    console.error('Syntax highlighting failed:', err);
-    return escapeHtml(code);
-  }
+export async function highlightSource(source: string, lang: string): Promise<string[]> {
+  return highlightLines(source.split('\n'), lang);
 }
 
 function escapeHtml(text: string): string {

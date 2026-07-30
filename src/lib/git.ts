@@ -15,14 +15,27 @@ interface CrossDiffCacheEntry {
 
 const crossDiffCache = new Map<string, CrossDiffCacheEntry>();
 
+// Cache for getFullContextPatches results (keyed by owner/repo:fromSha..toSha)
+interface FullContextCacheEntry {
+  data: Map<string, string>;
+  // Paths this entry is known to have looked at, or null when it covers the whole diff.
+  // A path may be absent from `data` and still be covered (binary, or over the line cap).
+  covered: Set<string> | null;
+  lastAccessed: number;
+}
+
+const fullContextCache = new Map<string, FullContextCacheEntry>();
+
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CACHE_EVICT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of crossDiffCache) {
-    if (now - entry.lastAccessed > CACHE_MAX_AGE_MS) {
-      crossDiffCache.delete(key);
+  for (const cache of [crossDiffCache, fullContextCache]) {
+    for (const [key, entry] of cache) {
+      if (now - entry.lastAccessed > CACHE_MAX_AGE_MS) {
+        cache.delete(key);
+      }
     }
   }
 }, CACHE_EVICT_INTERVAL_MS).unref();
@@ -318,6 +331,113 @@ export async function computeRangeDiff(
 }
 
 /**
+ * Split the output of a multi-file `git diff` into per-file patches.
+ *
+ * Returns [filename, patch] pairs in diff order, where the patch starts at the first `@@`
+ * line. A file with no `@@` at all (binary, mode-only change) yields `undefined` so callers
+ * can still see that the file was touched.
+ */
+function splitDiffByFile(diffOutput: string): Array<[string, string | undefined]> {
+  const out: Array<[string, string | undefined]> = [];
+
+  for (const fileDiff of diffOutput.split(/^diff --git /m).slice(1)) {
+    const lines = fileDiff.split('\n');
+    // Extract filename from the diff header: "a/path b/path"
+    const headerMatch = lines[0].match(/^a\/(.*?) b\/(.*)$/);
+    if (!headerMatch) continue;
+    const filename = headerMatch[2];
+
+    // Find where the patch starts (after the header lines)
+    let patchStartIdx = -1;
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].startsWith('@@')) {
+        patchStartIdx = i;
+        break;
+      }
+    }
+
+    out.push([
+      filename,
+      patchStartIdx >= 0 ? lines.slice(patchStartIdx).join('\n').trimEnd() : undefined,
+    ]);
+  }
+
+  return out;
+}
+
+/**
+ * Full-context (`-U99999`) patches for every file changed between two commits, keyed by
+ * filename.
+ *
+ * Used as *tokenizer context* for syntax highlighting, never for display: a full-context
+ * patch contains every line of both sides of the file, so `del + context` reconstructs the
+ * complete old file and `add + context` the complete new one. Highlighting against those
+ * instead of against the gapped diff is what stops a block comment closed inside an elided
+ * region from bleeding into every hunk below it.
+ *
+ * One `git diff` for the whole PR rather than one per file: the diff machinery prefetches
+ * all the blobs it is missing in a single round trip, which a per-file `git show` on our
+ * blobless clone would not.
+ *
+ * Files whose full-context patch exceeds `config.diff.fullContextMaxLines` are omitted —
+ * tokenizing a huge generated file to colour a three-line change is not worth it, and the
+ * caller falls back to per-hunk highlighting.
+ */
+export async function getFullContextPatches(
+  owner: string,
+  repo: string,
+  fromSha: string,
+  toSha: string,
+  token: string,
+  paths?: string[]
+): Promise<Map<string, string>> {
+  const cacheKey = `${owner}/${repo}:${fromSha}..${toSha}`;
+  const cached = fullContextCache.get(cacheKey);
+  // A filtered entry only answers requests it already covers — an unfiltered caller asking
+  // for every file must not be handed one built for a single path.
+  if (cached && (cached.covered === null || (paths && paths.every((p) => cached.covered!.has(p))))) {
+    cached.lastAccessed = Date.now();
+    return cached.data;
+  }
+
+  const repoPath = getRepoPath(owner, repo);
+
+  await ensureRepo(owner, repo, token);
+
+  const refsToFetch: string[] = [];
+  if (!await hasRef(repoPath, fromSha, token)) refsToFetch.push(fromSha);
+  if (!await hasRef(repoPath, toSha, token)) refsToFetch.push(toSha);
+  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token, config.git.shallowDepth);
+
+  const filtered = paths !== undefined && paths.length > 0;
+  const pathArgs = filtered ? ['--', ...paths] : [];
+  const result = await execGit(
+    ['diff', '-U99999', '--no-color', fromSha, toSha, ...pathArgs],
+    repoPath,
+    token
+  );
+
+  const patches = new Map<string, string>();
+  for (const [filename, patch] of splitDiffByFile(result.stdout)) {
+    if (!patch) continue;
+    if (patch.split('\n').length > config.diff.fullContextMaxLines) continue;
+    patches.set(filename, patch);
+  }
+
+  // Accumulate across filtered runs (a lazily-expanded PR asks one path at a time) rather
+  // than letting each one throw away what the last learned.
+  const merged = cached && cached.covered !== null
+    ? new Map([...cached.data, ...patches])
+    : patches;
+  const covered = filtered
+    ? new Set([...(cached?.covered ?? []), ...paths])
+    : null;
+  fullContextCache.set(cacheKey, { data: merged, covered, lastAccessed: Date.now() });
+
+  return merged;
+}
+
+/**
  * Compute a two-dot diff between two commits, returning file-level patches
  * similar to GitHub's PRFile format.
  */
@@ -411,26 +531,7 @@ export async function computeCrossDiff(
     patch?: string;
   }> = [];
 
-  const diffOutput = diffResult.stdout;
-  const fileDiffs = diffOutput.split(/^diff --git /m).slice(1);
-
-  for (const fileDiff of fileDiffs) {
-    const lines = fileDiff.split('\n');
-    // Extract filename from the diff header: "a/path b/path"
-    const headerMatch = lines[0].match(/^a\/(.*?) b\/(.*)$/);
-    if (!headerMatch) continue;
-    const filename = headerMatch[2];
-
-    // Find where the patch starts (after the header lines)
-    let patchStartIdx = -1;
-    for (let i = 1; i < lines.length; i++) {
-      if (lines[i].startsWith('@@')) {
-        patchStartIdx = i;
-        break;
-      }
-    }
-
-    const patch = patchStartIdx >= 0 ? lines.slice(patchStartIdx).join('\n').trimEnd() : undefined;
+  for (const [filename, patch] of splitDiffByFile(diffResult.stdout)) {
     const stats = statsMap.get(filename) || { additions: 0, deletions: 0 };
 
     files.push({

@@ -63,6 +63,10 @@ export const config = {
     // files with enormous diffs. Syntax highlighting costs ~0.5ms per line, so 20k changed
     // lines is ~10s of render regardless of how few files they live in.
     lazyLineThreshold: parseInt(optional('LAZY_DIFF_LINE_THRESHOLD', '5000'), 10),
+    // Syntax highlighting tokenizes the whole file, not just the diff, so that constructs
+    // closed inside an elided region are still seen (see getFullContextPatches). Past this
+    // many lines that stops paying for itself and highlighting falls back to per-hunk.
+    fullContextMaxLines: parseInt(optional('FULL_CONTEXT_MAX_LINES', '20000'), 10),
   },
 
   // Git operations
