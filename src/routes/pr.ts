@@ -28,6 +28,7 @@ import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
 import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
 import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
+import { startCounters } from '../lib/perf-counters.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
 import { computeMergeBase, computeRangeDiff, computeCrossDiff, computeCrossRevisionDiff, getFullFileDiff, getFullContextPatches } from '../lib/git.js';
@@ -73,6 +74,18 @@ export async function prRoutes(fastify: FastifyInstance) {
         // --- Performance instrumentation (mirrors the dashboard's breakdown) ---
         const perfStart = performance.now();
         const perf: Record<string, number> = {};
+        // Counters filled in by the layers below (git subprocesses, Shiki tokenizing), which
+        // are where the real cost lives but are several call frames away from any span.
+        const counters = startCounters();
+        const counterFields = () => ({
+          gitSpawns: counters.gitSpawns,
+          gitMs: Math.round(counters.gitMs),
+          gitNetworkSpawns: counters.gitNetworkSpawns,
+          gitNetworkMs: Math.round(counters.gitNetworkMs),
+          shikiCalls: counters.shikiCalls,
+          shikiMs: Math.round(counters.shikiMs),
+          linesTokenized: counters.linesTokenized,
+        });
         const span = async <T>(name: string, work: () => Promise<T>): Promise<T> => {
           const t = performance.now();
           try {
@@ -324,6 +337,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           !hideWhitespace && !isHistoricalView && !isCrossRevisionView;
         const cachedTables = new Map<string, string>();
         if (canUseDiffCache) {
+          const diffCacheReadStart = performance.now();
           // One query for the whole PR rather than one per file.
           const { rows } = query<{ file_path: string; rendered_html: string }>(
             `SELECT file_path, rendered_html FROM diff_cache
@@ -332,6 +346,7 @@ export async function prRoutes(fastify: FastifyInstance) {
             [owner, repo, pr.head.sha, enableHighlighting ? 1 : 0]
           );
           for (const row of rows) cachedTables.set(row.file_path, row.rendered_html);
+          perf.diffCacheReadMs = Math.round(performance.now() - diffCacheReadStart);
         }
         let diffCacheHits = 0;
 
@@ -356,11 +371,15 @@ export async function prRoutes(fastify: FastifyInstance) {
 
           if (needSources.length > 0) {
             try {
-              const mergeBase = await computeMergeBase(
-                owner, repo, pr.base.sha, pr.head.sha, request.user!.accessToken
+              const mergeBase = await span('mergeBaseMs', () =>
+                computeMergeBase(
+                  owner, repo, pr.base.sha, pr.head.sha, request.user!.accessToken
+                )
               );
-              const patches = await getFullContextPatches(
-                owner, repo, mergeBase, pr.head.sha, request.user!.accessToken, needSources
+              const patches = await span('fullContextMs', () =>
+                getFullContextPatches(
+                  owner, repo, mergeBase, pr.head.sha, request.user!.accessToken, needSources
+                )
               );
               for (const path of needSources) {
                 const patch = patches.get(path);
@@ -374,6 +393,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
         }
 
+        const renderFilesStart = performance.now();
         for (let i = 0; i < filesToRender.length; i++) {
           const file = filesToRender[i];
           const fileComments = (isHistoricalView || isCrossRevisionView) ? [] : (commentsByFile.get(file.filename) || []);
@@ -467,6 +487,9 @@ export async function prRoutes(fastify: FastifyInstance) {
           });
         }
 
+        perf.renderFilesMs = Math.round(performance.now() - renderFilesStart);
+        // Still reported as the whole-block total, so it stays comparable with older logs;
+        // mergeBaseMs + fullContextMs + diffCacheReadMs + renderFilesMs now break it down.
         perf.diffRenderMs = Math.round(performance.now() - diffRenderStart);
 
         // Build directory tree from files
@@ -488,14 +511,16 @@ export async function prRoutes(fastify: FastifyInstance) {
         const checksSummary = summarizeChecks(checks, combinedStatus);
 
         // Render PR body as markdown
-        const renderedBody = await renderMarkdown(pr.body);
+        const renderedBody = await span('bodyMarkdownMs', () => renderMarkdown(pr.body));
 
         // Freshness: the oldest confirmation time across this page's cached resources is
         // what the "Updated Xm ago" indicator reports — it's the honest figure, since the
         // page is only as current as its stalest part.
+        const freshnessStart = performance.now();
         const freshnessTimes = prCacheKeys(owner, repo, prNumber)
           .map(getFetchedAt)
           .filter((d): d is Date => d !== null);
+        perf.freshnessMs = Math.round(performance.now() - freshnessStart);
         const dataFetchedAt =
           freshnessTimes.length > 0
             ? new Date(Math.min(...freshnessTimes.map((d) => d.getTime()))).toISOString()
@@ -504,22 +529,25 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Get current timestamp
         const fetchedAt = new Date().toISOString();
 
-        request.log.info(
-          {
-            pr: `${owner}/${repo}#${prNumber}`,
-            totalMs: Math.round(performance.now() - perfStart),
-            files: files.length,
-            reviewComments: reviewComments.length,
-            lazyDiffs,
-            diffCacheHits,
-            diffsRendered: lazyDiffs ? 0 : filesToRender.length - diffCacheHits,
-            refresh: cacheMode === 'bypass',
-            ...perf,
-          },
-          'pr performance breakdown'
+        // These two markdown batches used to be evaluated inline in the reply.view() argument,
+        // i.e. after the perf log had already been emitted — so their cost (including Shiki on
+        // every fenced code block, none of it cached) was invisible in totalMs. Hoisted out and
+        // run as one Promise.all rather than two sequential ones, since neither depends on the
+        // other; object-literal properties would otherwise have evaluated them in order.
+        const [renderedIssueComments, renderedReviews] = await span('viewMarkdownMs', () =>
+          Promise.all([
+            Promise.all(issueComments.map(async (c) => ({
+              ...c,
+              renderedBody: await renderMarkdown(c.body),
+            }))),
+            Promise.all(reviews.map(async (r) => ({
+              ...r,
+              renderedBody: await renderMarkdown(r.body),
+            }))),
+          ])
         );
 
-        return reply.view('pr', {
+        const viewData = {
           title: `#${prNumber} ${pr.title} - Argus`,
           user: request.user,
           owner,
@@ -532,19 +560,13 @@ export async function prRoutes(fastify: FastifyInstance) {
           fileTreeHtml,
           lazyDiffs,
           commentFiles,
-          issueComments: await Promise.all(issueComments.map(async (c) => ({
-            ...c,
-            renderedBody: await renderMarkdown(c.body),
-          }))),
+          issueComments: renderedIssueComments,
           reviewComments: reviewComments.map((c) => ({
             ...c,
             renderedBody: renderedCommentBodies.get(c.id) ?? '',
             renderedHunk: c.diff_hunk ? renderSimpleHunk(parseHunkString(c.diff_hunk)) : '',
           })),
-          reviews: await Promise.all(reviews.map(async (r) => ({
-            ...r,
-            renderedBody: await renderMarkdown(r.body),
-          }))),
+          reviews: renderedReviews,
           timeline,
           checksSummary,
           checks,
@@ -567,7 +589,32 @@ export async function prRoutes(fastify: FastifyInstance) {
           reviewedLines,
           activeTab,
           hideWhitespace,
-        });
+        };
+
+        // Rendering is measured and the log emitted *after* it, so totalMs covers the whole
+        // handler. In dev this also captures EJS compiling pr.ejs from scratch, which
+        // @fastify/view only caches when NODE_ENV=production.
+        try {
+          return await span('ejsMs', async () => reply.view('pr', viewData));
+        } finally {
+          request.log.info(
+            {
+              pr: `${owner}/${repo}#${prNumber}`,
+              totalMs: Math.round(performance.now() - perfStart),
+              files: files.length,
+              reviewComments: reviewComments.length,
+              lazyDiffs,
+              diffCacheHits,
+              diffsRendered: lazyDiffs ? 0 : filesToRender.length - diffCacheHits,
+              refresh: cacheMode === 'bypass',
+              filesWithComments: commentsByFile.size,
+              fullContextFiles: fullContextSources.size,
+              ...perf,
+              ...counterFields(),
+            },
+            'pr performance breakdown'
+          );
+        }
       } catch (err: any) {
         console.error('Error fetching PR:', err);
 

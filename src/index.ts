@@ -17,7 +17,7 @@ import { cleanupOctokit, initOctokit } from './lib/github.js';
 import { evictExpiredCache } from './lib/api-cache.js';
 import { getHighlighterInstance } from './lib/syntax-highlighter.js';
 import { startPrefetch, stopPrefetch } from './lib/prefetch.js';
-import { cleanupGitProcesses } from './lib/git.js';
+import { cleanupGitProcesses, setGitLogger } from './lib/git.js';
 import { authRoutes } from './routes/auth.js';
 import { homeRoutes } from './routes/home.js';
 import { prRoutes } from './routes/pr.js';
@@ -34,15 +34,19 @@ const isDev = process.env.NODE_ENV !== 'production';
 // `--import tsx/esm` loader from the dev runner. An in-process stream avoids
 // the worker thread entirely while keeping the same pretty output.
 // pino-pretty is a devDependency, so only import it when actually in dev.
+// LOG_LEVEL=debug surfaces the per-git-command timings from lib/git.ts, which is how you tell
+// a cold repo (one slow network fetch) from a warm one (several wasted local spawns).
+const logLevel = process.env.LOG_LEVEL || 'info';
+
 const logger = isDev
   ? pino(
-      { level: 'info' },
+      { level: logLevel },
       (await import('pino-pretty')).default({
         translateTime: 'HH:MM:ss Z',
         ignore: 'pid,hostname',
       })
     )
-  : pino({ level: 'info' }); // Plain JSON logging in production
+  : pino({ level: logLevel }); // Plain JSON logging in production
 
 const fastify = Fastify({ logger });
 
@@ -56,6 +60,9 @@ async function start() {
 
     // Initialize Octokit singleton
     initOctokit(config.githubToken);
+
+    // Let git.ts report per-command timings (visible at LOG_LEVEL=debug).
+    setGitLogger(fastify.log);
 
     // Register plugins
     // Rendered diffs are large HTML tables that compress extremely well.

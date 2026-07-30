@@ -3,6 +3,20 @@ import type { ChildProcess } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { config } from '../config.js';
+import { bump } from './perf-counters.js';
+
+/**
+ * Optional logger for per-command timing. Set once at startup (see src/index.ts); left unset
+ * this module stays silent, which keeps tests and scripts that import git.ts free of logging.
+ */
+interface GitLogger {
+  debug(obj: Record<string, unknown>, msg: string): void;
+}
+let gitLogger: GitLogger | null = null;
+
+export function setGitLogger(logger: GitLogger): void {
+  gitLogger = logger;
+}
 
 // Track active git processes for cleanup during shutdown
 const activeProcesses = new Set<ChildProcess>();
@@ -75,6 +89,12 @@ export function sanitizeError(message: string, token: string): string {
 }
 
 /**
+ * Subcommands that talk to the remote. Counted separately because a slow local spawn and a
+ * slow network fetch call for completely different fixes.
+ */
+const NETWORK_SUBCOMMANDS = new Set(['fetch', 'clone', 'ls-remote', 'push']);
+
+/**
  * Execute a git command with timeout
  */
 async function execGit(
@@ -83,6 +103,30 @@ async function execGit(
   token?: string,
   timeout: number = config.git.commandTimeout
 ): Promise<GitCommandResult> {
+  const startedAt = performance.now();
+  const isNetwork = NETWORK_SUBCOMMANDS.has(args[0]);
+
+  // Record on both the success and failure paths — a git command that fails slowly (a fetch
+  // that times out) is exactly the kind of thing we're hunting for. Guarded because the
+  // timeout path calls cleanup() and then kills the process, which fires 'close' and calls
+  // cleanup() a second time.
+  let recorded = false;
+  const record = () => {
+    if (recorded) return;
+    recorded = true;
+    const elapsed = performance.now() - startedAt;
+    bump('gitSpawns', 1);
+    bump('gitMs', elapsed);
+    if (isNetwork) {
+      bump('gitNetworkSpawns', 1);
+      bump('gitNetworkMs', elapsed);
+    }
+    gitLogger?.debug(
+      { args: token ? args.map((a) => sanitizeError(a, token)) : args, cwd, ms: Math.round(elapsed), network: isNetwork },
+      'git command'
+    );
+  };
+
   return new Promise((resolve, reject) => {
     const proc = spawn('git', args, {
       cwd,
@@ -100,6 +144,7 @@ async function execGit(
     const cleanup = () => {
       clearTimeout(timer);
       activeProcesses.delete(proc);
+      record();
     };
 
     const timer = setTimeout(() => {

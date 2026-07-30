@@ -4,6 +4,7 @@
  */
 
 import { createHighlighter, type Highlighter } from 'shiki';
+import { bump } from './perf-counters.js';
 
 let highlighterInstance: Highlighter | null = null;
 
@@ -127,10 +128,16 @@ export async function highlightLines(lines: string[], lang: string): Promise<str
       return lines.map(escapeHtml);
     }
 
+    // codeToTokens is synchronous CPU work — this span is the real highlighting cost, and it
+    // blocks the event loop, so no amount of Promise.all around callers parallelizes it.
+    const tokenizeStart = performance.now();
     const { tokens } = highlighter.codeToTokens(lines.join('\n'), {
       lang: lang as any,
       theme: 'github-light',
     });
+    bump('shikiMs', performance.now() - tokenizeStart);
+    bump('shikiCalls', 1);
+    bump('linesTokenized', lines.length);
 
     // codeToTokens yields one token array per line (empty array for a blank line).
     return lines.map((line, i) => {
