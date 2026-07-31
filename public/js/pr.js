@@ -1205,22 +1205,9 @@
     function navigateToFile(file) {
       closeModal();
 
-      // Switch to Files tab
-      const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-      if (filesTab && !filesTab.classList.contains('active')) {
-        filesTab.click();
-      }
-
-      // Expand parent directories
-      let parent = file.el.parentElement?.closest('details.diff-directory');
-      while (parent) {
-        parent.open = true;
-        parent = parent.parentElement?.closest('details.diff-directory');
-      }
-
-      // Expand file
-      file.el.open = true;
-      file.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Same navigation as the `n`/`p` shortcuts: expand, mark current (so the selection
+      // border shows and `r` marks this file reviewed) and scroll to it.
+      goToFile(file.el);
 
       // Update hash
       const url = new URL(window.location);
