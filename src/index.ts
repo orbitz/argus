@@ -16,6 +16,7 @@ import { initDb, closeDb, query } from './db/index.js';
 import { cleanupOctokit, initOctokit } from './lib/github.js';
 import { evictExpiredCache } from './lib/api-cache.js';
 import { getHighlighterInstance } from './lib/syntax-highlighter.js';
+import { warmHighlightPool } from './lib/highlight-pool.js';
 import { startPrefetch, stopPrefetch } from './lib/prefetch.js';
 import { cleanupGitProcesses, setGitLogger } from './lib/git.js';
 import { authRoutes } from './routes/auth.js';
@@ -126,10 +127,13 @@ async function start() {
     setInterval(runDailyCleanup, 24 * 60 * 60 * 1000).unref();
 
     // Load Shiki's WASM engine and grammars now rather than inside the first PR render.
-    // In watch mode this cost was paid again after every restart.
+    // In watch mode this cost was paid again after every restart. The pool's workers each
+    // build their own highlighter, so they need the same treatment — otherwise the first PR
+    // after a restart pays ~1s of grammar loading on every worker at once.
     getHighlighterInstance().catch((err: unknown) =>
       fastify.log.warn({ err }, 'Shiki pre-warm failed; will initialize on first use')
     );
+    warmHighlightPool();
 
     // Start server
     await fastify.listen({ port: config.port, host: config.host });

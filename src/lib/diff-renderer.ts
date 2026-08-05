@@ -1,5 +1,5 @@
 import { DiffFile, DiffLine, DiffHunk, parseHunkString, parsePatch } from './diff-parser.js';
-import { detectLanguage, highlightLines, highlightSource } from './syntax-highlighter.js';
+import { detectLanguage, highlightLines } from './syntax-highlighter.js';
 
 /**
  * The complete text of both sides of a file, used purely as syntax-highlighting context.
@@ -134,10 +134,27 @@ async function buildHighlightMap(
 
   const map = new Map<DiffLine, string>();
 
-  if (aligned.length > 0 && sources) {
+  if (aligned.length > 0 && oldSrc && newSrc) {
+    // Tokenizing to EOF is wasted work: grammar state only ever flows forward, so a line's
+    // colours depend on everything *above* it and nothing below. Stopping at the last line
+    // any hunk actually asks for gives byte-identical output for those lines while skipping
+    // the tail — which on a small change near the top of a big file is nearly the whole file.
+    // A side no aligned hunk reads (a pure-addition file's old side, say) is skipped outright.
+    let maxOld = 0;
+    let maxNew = 0;
+    for (const hunk of aligned) {
+      for (const line of hunk.lines) {
+        if (line.type === 'del') {
+          if (line.oldLineNum !== null && line.oldLineNum > maxOld) maxOld = line.oldLineNum;
+        } else if (line.newLineNum !== null && line.newLineNum > maxNew) {
+          maxNew = line.newLineNum;
+        }
+      }
+    }
+
     const [oldHtml, newHtml] = await Promise.all([
-      highlightSource(sources.oldSource, language),
-      highlightSource(sources.newSource, language),
+      highlightLines(oldSrc.slice(0, maxOld), language),
+      highlightLines(newSrc.slice(0, maxNew), language),
     ]);
 
     for (const hunk of aligned) {

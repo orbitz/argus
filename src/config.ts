@@ -67,6 +67,11 @@ export const config = {
     // closed inside an elided region are still seen (see getFullContextPatches). Past this
     // many lines that stops paying for itself and highlighting falls back to per-hunk.
     fullContextMaxLines: parseInt(optional('FULL_CONTEXT_MAX_LINES', '20000'), 10),
+    // Worker threads used for syntax highlighting. Shiki's tokenizer is synchronous, so
+    // in-process it blocks the event loop for the whole render. Each worker costs ~57MB
+    // resident, so this is a memory-for-latency trade: 0 disables the pool and highlights
+    // inline; -1 (the default) sizes it from the machine, up to four.
+    highlightWorkers: parseInt(optional('HIGHLIGHT_WORKERS', '-1'), 10),
   },
 
   // Git operations

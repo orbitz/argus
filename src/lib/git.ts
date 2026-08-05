@@ -40,8 +40,26 @@ interface FullContextCacheEntry {
 
 const fullContextCache = new Map<string, FullContextCacheEntry>();
 
+// Repos whose `origin` is already configured for a given authenticated URL, and the setups
+// currently in flight. See ensureRepo.
+const configuredRepos = new Set<string>();
+const repoSetups = new Map<string, Promise<void>>();
+
+// Objects known to be present locally, keyed `repoPath\0sha`. Only positive results are
+// cached: an object never disappears from the cache repo, but a missing one becomes present
+// as soon as something fetches it.
+const localObjects = new Set<string>();
+
+// merge-base results, keyed `repoPath\0ref1\0ref2`. Commits are immutable, so the answer for
+// a pair of SHAs never changes once we have found it.
+const mergeBaseCache = new Map<string, string>();
+
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CACHE_EVICT_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+// Both hold nothing but short strings, so the cap is about bounding a long-lived process
+// rather than reclaiming much: drop everything and let it refill from git.
+const SHA_CACHE_MAX_ENTRIES = 50_000;
 
 setInterval(() => {
   const now = Date.now();
@@ -52,6 +70,8 @@ setInterval(() => {
       }
     }
   }
+  if (localObjects.size > SHA_CACHE_MAX_ENTRIES) localObjects.clear();
+  if (mergeBaseCache.size > SHA_CACHE_MAX_ENTRIES) mergeBaseCache.clear();
 }, CACHE_EVICT_INTERVAL_MS).unref();
 
 export interface GitCommandResult {
@@ -101,7 +121,8 @@ async function execGit(
   args: string[],
   cwd: string,
   token?: string,
-  timeout: number = config.git.commandTimeout
+  timeout: number = config.git.commandTimeout,
+  options?: { noLazyFetch?: boolean }
 ): Promise<GitCommandResult> {
   const startedAt = performance.now();
   const isNetwork = NETWORK_SUBCOMMANDS.has(args[0]);
@@ -130,7 +151,14 @@ async function execGit(
   return new Promise((resolve, reject) => {
     const proc = spawn('git', args, {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        // Local-only commands opt out of the promisor remote. Without this a command that
+        // touches a missing object silently turns into a network round trip — an existence
+        // check that should cost 5ms instead costs seconds and reports success.
+        ...(options?.noLazyFetch ? { GIT_NO_LAZY_FETCH: '1' } : {}),
+      },
     });
 
     // Track the process
@@ -197,8 +225,32 @@ async function execGit(
  */
 export async function ensureRepo(owner: string, repo: string, token: string): Promise<void> {
   const repoPath = getRepoPath(owner, repo);
-  const parentDir = dirname(repoPath);
   const authUrl = buildAuthUrl(owner, repo, token);
+
+  // Every git entry point calls this, so a single PR render used to pay for the same four
+  // spawns four times over. The configuration is process-stable: once we have written this
+  // exact remote URL we only need to redo it if the token rotates (different URL) or the
+  // cache directory is wiped from under us. Concurrent callers share one setup rather than
+  // racing each other through the same `git config` writes.
+  const key = `${repoPath}\0${authUrl}`;
+  if (configuredRepos.has(key) && existsSync(repoPath)) return;
+
+  const inflight = repoSetups.get(key);
+  if (inflight) return inflight;
+
+  const setup = setupRepo(repoPath, authUrl, token)
+    .then(() => {
+      configuredRepos.add(key);
+    })
+    .finally(() => {
+      repoSetups.delete(key);
+    });
+  repoSetups.set(key, setup);
+  return setup;
+}
+
+async function setupRepo(repoPath: string, authUrl: string, token: string): Promise<void> {
+  const parentDir = dirname(repoPath);
 
   // Create parent directory if needed
   if (!existsSync(parentDir)) {
@@ -269,11 +321,23 @@ export async function fetchRefs(
 }
 
 /**
- * Check if a ref/SHA already exists in the local repo
+ * Check if a ref/SHA already exists in the local repo.
+ *
+ * Runs with lazy fetching disabled: `origin` is a promisor remote, so without that a
+ * cat-file for a missing object quietly fetches it over the network — turning the check
+ * this function exists to make cheap into the most expensive thing in the request, and
+ * hiding the cost from the network counters. We want a fast local "no" so the caller can
+ * batch both refs into a single depth-limited `fetchRefs`.
  */
 async function hasRef(repoPath: string, sha: string, token?: string): Promise<boolean> {
+  const key = `${repoPath}\0${sha}`;
+  if (localObjects.has(key)) return true;
+
   try {
-    await execGit(['cat-file', '-t', sha], repoPath, token);
+    await execGit(['cat-file', '-e', `${sha}^{object}`], repoPath, token, undefined, {
+      noLazyFetch: true,
+    });
+    localObjects.add(key);
     return true;
   } catch {
     return false;
@@ -315,6 +379,9 @@ export async function computeMergeBase(
   token: string
 ): Promise<string> {
   const repoPath = getRepoPath(owner, repo);
+  const cacheKey = `${repoPath}\0${ref1}\0${ref2}`;
+  const cachedBase = mergeBaseCache.get(cacheKey);
+  if (cachedBase) return cachedBase;
 
   await ensureRepo(owner, repo, token);
 
@@ -339,6 +406,8 @@ export async function computeMergeBase(
   if (!mergeBase) {
     throw new Error(`Failed to compute merge-base: no common ancestor found within depth ${depth}`);
   }
+
+  mergeBaseCache.set(cacheKey, mergeBase);
   return mergeBase;
 }
 

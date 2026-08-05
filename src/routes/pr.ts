@@ -394,8 +394,18 @@ export async function prRoutes(fastify: FastifyInstance) {
         }
 
         const renderFilesStart = performance.now();
-        for (let i = 0; i < filesToRender.length; i++) {
-          const file = filesToRender[i];
+
+        // Files render concurrently rather than one awaited at a time. On its own that would
+        // buy nothing — the work is CPU-bound — but highlighting now happens on a worker
+        // pool, and the pool only fills if several files are in flight at once. Results are
+        // collected positionally so the rendered order still matches filesToRender.
+        //
+        // Diff-cache writes are deferred to after the fan-out: they are synchronous SQLite
+        // calls on this thread, and interleaving them with the renders would put the event
+        // loop back in the business of blocking.
+        const pendingCacheWrites: Array<{ path: string; patch: string; html: string }> = [];
+
+        const rendered = await Promise.all(filesToRender.map(async (file) => {
           const fileComments = (isHistoricalView || isCrossRevisionView) ? [] : (commentsByFile.get(file.filename) || []);
 
           if (!file.patch) {
@@ -411,7 +421,7 @@ export async function prRoutes(fastify: FastifyInstance) {
             };
 
             const slug = fileSlug(file.filename);
-            parsedFiles.push({
+            return {
               file: diffFile,
               path: file.filename,
               renderedHtml: await renderFile(diffFile, slug, pr.head.sha, owner, repo, prNumber, fileComments, reviewedFilesSet.has(file.filename), enableHighlighting, file.sha || fileShaMap.get(file.filename) || ''),
@@ -420,8 +430,7 @@ export async function prRoutes(fastify: FastifyInstance) {
               totalLines: 0,
               comments: fileComments,
               commentCount: fileComments.length,
-            });
-            continue;
+            };
           }
 
           const parsedFile = parsePatch(file.patch, file.filename, file.status);
@@ -463,19 +472,15 @@ export async function prRoutes(fastify: FastifyInstance) {
             if (cacheableFile) {
               const table = extractDiffTable(renderedHtml);
               if (table) {
-                query(
-                  `INSERT OR REPLACE INTO diff_cache
-                     (owner, repo, head_sha, file_path, highlighted, diff_data, rendered_html, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
-                  [
-                    owner, repo, pr.head.sha, file.filename,
-                    enableHighlighting ? 1 : 0, file.patch, table,
-                  ]
-                );
+                pendingCacheWrites.push({
+                  path: file.filename,
+                  patch: file.patch,
+                  html: table,
+                });
               }
             }
           }
-          parsedFiles.push({
+          return {
             file: parsedFile,
             path: file.filename,
             renderedHtml,
@@ -484,7 +489,20 @@ export async function prRoutes(fastify: FastifyInstance) {
             totalLines: 0,
             comments: fileComments,
             commentCount: fileComments.length,
-          });
+          };
+        }));
+        parsedFiles.push(...rendered);
+
+        for (const write of pendingCacheWrites) {
+          query(
+            `INSERT OR REPLACE INTO diff_cache
+               (owner, repo, head_sha, file_path, highlighted, diff_data, rendered_html, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))`,
+            [
+              owner, repo, pr.head.sha, write.path,
+              enableHighlighting ? 1 : 0, write.patch, write.html,
+            ]
+          );
         }
 
         perf.renderFilesMs = Math.round(performance.now() - renderFilesStart);

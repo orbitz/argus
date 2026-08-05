@@ -5,43 +5,35 @@
 
 import { createHighlighter, type Highlighter } from 'shiki';
 import { bump } from './perf-counters.js';
+import { HIGHLIGHT_LANGS, THEME, escapeHtml, tokensToLineHtml } from './highlight-core.js';
+import { highlightOnWorker, poolAvailable } from './highlight-pool.js';
 
-let highlighterInstance: Highlighter | null = null;
+/**
+ * The in-flight or settled creation, not the resolved highlighter.
+ *
+ * Caching the instance instead leaves a window between the first call and its await in which
+ * every other caller still sees null and starts its own createHighlighter. That was harmless
+ * while diffs rendered one file at a time; now that they render concurrently it meant a
+ * highlighter per file, and enough of them to exhaust Oniguruma's WASM heap outright
+ * ("fail to memory allocation") — after which every file fell back to unhighlighted text.
+ */
+let highlighterPromise: Promise<Highlighter> | null = null;
 
 /**
  * Get or create the Shiki highlighter instance (singleton)
  */
-export async function getHighlighterInstance(): Promise<Highlighter> {
-  if (!highlighterInstance) {
-    highlighterInstance = await createHighlighter({
-      themes: ['github-light'],
-      langs: [
-        'javascript',
-        'typescript',
-        'python',
-        'java',
-        'go',
-        'rust',
-        'c',
-        'cpp',
-        'csharp',
-        'ruby',
-        'php',
-        'html',
-        'css',
-        'json',
-        'yaml',
-        'markdown',
-        'shell',
-        'sql',
-        'bash',
-        'dockerfile',
-        'xml',
-        'ocaml',
-      ],
+export function getHighlighterInstance(): Promise<Highlighter> {
+  if (!highlighterPromise) {
+    highlighterPromise = createHighlighter({
+      themes: [THEME],
+      langs: [...HIGHLIGHT_LANGS],
+    }).catch((err) => {
+      // Don't cache a failure: a transient one would otherwise poison every later render.
+      highlighterPromise = null;
+      throw err;
     });
   }
-  return highlighterInstance;
+  return highlighterPromise;
 }
 
 /**
@@ -88,21 +80,11 @@ export function detectLanguage(filePath: string): string | null {
   return languageMap[ext] || null;
 }
 
-// Shiki's FontStyle bitflags (not exported from the package root).
-const FONT_STYLE_ITALIC = 1;
-const FONT_STYLE_BOLD = 2;
-const FONT_STYLE_UNDERLINE = 4;
-
-function tokenStyle(color: string | undefined, fontStyle: number | undefined): string {
-  const parts: string[] = [];
-  if (color) parts.push(`color:${color}`);
-  if (fontStyle && fontStyle > 0) {
-    if (fontStyle & FONT_STYLE_ITALIC) parts.push('font-style:italic');
-    if (fontStyle & FONT_STYLE_BOLD) parts.push('font-weight:bold');
-    if (fontStyle & FONT_STYLE_UNDERLINE) parts.push('text-decoration:underline');
-  }
-  return parts.join(';');
-}
+/**
+ * Below this many lines, the thread hop and structured-clone cost more than just tokenizing
+ * here. Small isolated hunks stay in-process; whole-file context passes go to the pool.
+ */
+const WORKER_MIN_LINES = 40;
 
 /**
  * Highlight many lines in a single Shiki pass, returning one HTML string per input line.
@@ -116,64 +98,55 @@ function tokenStyle(color: string | undefined, fontStyle: number | undefined): s
  * really are contiguous in the source. Handing this the concatenation of several diff hunks
  * makes the grammar step straight over the elided regions between them: a block comment
  * opened in one hunk and closed in the gap never gets closed, and every following hunk comes
- * back coloured as comment. Prefer highlightSource() with the real file whenever it is
- * available; use this only for a single contiguous run.
+ * back coloured as comment. Prefer a real file's lines whenever they are available; use this
+ * on hunk contents only for a single contiguous run.
+ *
+ * A *prefix* of a file is fine, and is what buildHighlightMap passes: grammar state flows
+ * forward only, so truncating after the last line the caller needs cannot change any line
+ * before it.
  */
 export async function highlightLines(lines: string[], lang: string): Promise<string[]> {
   if (lines.length === 0) return [];
 
+  bump('shikiCalls', 1);
+  bump('linesTokenized', lines.length);
+
+  if (lines.length >= WORKER_MIN_LINES && poolAvailable()) {
+    try {
+      const { html, ms } = await highlightOnWorker(lines, lang);
+      // Bumped here rather than in the pool so AsyncLocalStorage attributes it to the request
+      // that asked. It is CPU time summed across threads, so once the pool is doing its job
+      // shikiMs legitimately exceeds the wall clock; shikiMs/renderFilesMs is the speedup.
+      bump('shikiMs', ms);
+      return html;
+    } catch {
+      // Pool unavailable, worker died, or unknown language — fall through and do it here.
+    }
+  }
+
+  return highlightInProcess(lines, lang);
+}
+
+async function highlightInProcess(lines: string[], lang: string): Promise<string[]> {
   try {
     const highlighter = await getHighlighterInstance();
     if (!highlighter.getLoadedLanguages().includes(lang as any)) {
       return lines.map(escapeHtml);
     }
 
-    // codeToTokens is synchronous CPU work — this span is the real highlighting cost, and it
-    // blocks the event loop, so no amount of Promise.all around callers parallelizes it.
+    // codeToTokens is synchronous CPU work, and on this thread it blocks the event loop —
+    // which is exactly why the bulk of it is handed to the worker pool above.
     const tokenizeStart = performance.now();
     const { tokens } = highlighter.codeToTokens(lines.join('\n'), {
       lang: lang as any,
-      theme: 'github-light',
+      theme: THEME,
     });
     bump('shikiMs', performance.now() - tokenizeStart);
-    bump('shikiCalls', 1);
-    bump('linesTokenized', lines.length);
 
     // codeToTokens yields one token array per line (empty array for a blank line).
-    return lines.map((line, i) => {
-      const lineTokens = tokens[i];
-      if (!lineTokens) return escapeHtml(line); // defensive: line-count mismatch
-      return lineTokens
-        .map((t) => {
-          const style = tokenStyle(t.color, t.fontStyle);
-          const content = escapeHtml(t.content);
-          return style ? `<span style="${style}">${content}</span>` : content;
-        })
-        .join('');
-    });
+    return tokensToLineHtml(lines, tokens);
   } catch (err) {
     console.error('Batch syntax highlighting failed:', err);
     return lines.map(escapeHtml);
   }
-}
-
-/**
- * Highlight a whole source file, returning one HTML string per line, indexable by
- * (1-based line number - 1).
- *
- * Unlike highlightLines this is guaranteed gap-free, which is the whole point: it is the
- * only way to colour a diff line the way it would look in the real file, both for a
- * construct whose terminator was elided and for a hunk that starts inside one.
- */
-export async function highlightSource(source: string, lang: string): Promise<string[]> {
-  return highlightLines(source.split('\n'), lang);
-}
-
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
 }

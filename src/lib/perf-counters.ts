@@ -27,7 +27,11 @@ export interface PerfCounters {
   gitNetworkMs: number;
   /** Lines handed to Shiki. Counts whole-file context passes, not just changed lines. */
   linesTokenized: number;
-  /** Wall-clock inside Shiki's (synchronous) tokenizer. */
+  /**
+   * Time inside Shiki's (synchronous) tokenizer, summed across the worker pool's threads.
+   * Once highlighting runs in parallel this exceeds the request's wall clock on purpose:
+   * compare it against renderFilesMs to see how much parallelism the pool actually got.
+   */
   shikiMs: number;
   /** Number of separate Shiki tokenize passes. */
   shikiCalls: number;

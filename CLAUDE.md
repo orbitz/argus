@@ -69,6 +69,14 @@ HTML Response (with optional client-side JS enhancement)
 - Handles comment threads on specific lines
 - Generates file sidebar navigation
 
+**`src/lib/syntax-highlighter.ts`** + **`highlight-pool.ts`** / **`highlight-worker.ts`** / **`highlight-core.ts`** - Shiki highlighting
+- Tokenizes each side of a file as one document so constructs closed in an elided region still
+  highlight correctly, truncated at the last line the diff actually reads
+- Shiki's tokenizer is synchronous, so passes of 40+ lines go to a pool of worker threads
+  (`HIGHLIGHT_WORKERS`) rather than blocking the event loop for the whole render
+- The pool is an optimization, never a dependency: any spawn failure, worker crash, or
+  unsupported language falls back to highlighting in-process
+
 **`src/lib/git.ts`** - Git operations via shell commands
 - Clones bare repos to `/tmp/argus-git-cache`
 - Computes merge-base for PR base tracking
@@ -115,6 +123,8 @@ PORT=3000
 HOST=0.0.0.0
 DATABASE_PATH=./data/argus.db
 CACHE_TTL=60000          # API cache TTL in ms
+HIGHLIGHT_WORKERS=-1     # Syntax-highlighting worker threads. -1 auto-sizes (max 4),
+                         # 0 highlights in-process. Each worker costs ~57MB resident.
 BASE_URL=http://localhost:3000
 ```
 
