@@ -62,7 +62,9 @@
 
     const p = (async () => {
       try {
-        const url = `/pr/${config.owner}/${config.repo}/${config.prNumber}/file-diff?path=${encodeURIComponent(path)}`;
+        // Carry the whitespace-hidden mode through to the lazy body so it matches the page.
+        const wParam = config.hideWhitespace ? '&w=1' : '';
+        const url = `/pr/${config.owner}/${config.repo}/${config.prNumber}/file-diff?path=${encodeURIComponent(path)}${wParam}`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Server returned ' + response.status);
         const data = await response.json();
@@ -134,6 +136,99 @@
     }
   }
 
+  // ---- Review items: commits and files ------------------------------------------------
+  // The Review tab holds two kinds of reviewable item — commit messages (.commit-entry) and
+  // file diffs (.diff-file) — and every shortcut treats them alike. The commits section is
+  // rendered first, so document order already means "commits, then files".
+  const ITEM_SELECTOR = '.commit-entry, .diff-file';
+
+  function reviewItems() {
+    return Array.from(document.querySelectorAll(ITEM_SELECTOR));
+  }
+
+  function isItemReviewed(el) {
+    return el.classList.contains('file-reviewed') || el.classList.contains('commit-reviewed');
+  }
+
+  function unreviewedItems() {
+    return reviewItems().filter(el => !isItemReviewed(el));
+  }
+
+  function itemCheckbox(el) {
+    return el.querySelector('.file-reviewed-toggle, .commit-reviewed-toggle');
+  }
+
+  // ---- Current item marker + unreviewed navigation ------------------------------------
+  // The "current" item is whichever one the user last navigated to — via the `n` shortcut
+  // or by marking something reviewed (which advances to the next unreviewed item). It gets a
+  // border so the position is obvious when most of the page is collapsed.
+  function setCurrentItem(itemEl) {
+    document.querySelectorAll('.review-item-current').forEach(el => {
+      if (el !== itemEl) el.classList.remove('review-item-current');
+    });
+    if (itemEl) itemEl.classList.add('review-item-current');
+  }
+
+  // Expand an item (plus, for files, its parent directories), mark it current, and scroll it
+  // to the top.
+  function goToItem(itemEl) {
+    // Switch to the Review tab if we're not already on it
+    const reviewTab = document.querySelector('.pr-tab[data-tab="review"]');
+    if (reviewTab && !reviewTab.classList.contains('active')) {
+      reviewTab.click();
+    }
+
+    if (itemEl.classList.contains('diff-file')) {
+      expandFileChain(itemEl);
+    } else {
+      // Navigating to a commit means wanting to read it, so reveal the message body.
+      itemEl.open = true;
+    }
+    setCurrentItem(itemEl);
+    itemEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // Find the next unreviewed item after `afterEl` in document order, wrapping around to the
+  // first one. Returns null when nothing is left unreviewed. `afterEl` itself is skipped, so
+  // this is safe to call with the item that was just marked reviewed.
+  function findNextUnreviewedItem(afterEl) {
+    const unreviewed = unreviewedItems();
+    if (unreviewed.length === 0) return null;
+    if (!afterEl) return unreviewed[0];
+
+    const following = unreviewed.find(el => el !== afterEl &&
+      (afterEl.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING));
+    return following || unreviewed.find(el => el !== afterEl) || null;
+  }
+
+  // The item a keyboard shortcut acts on: whatever was last navigated to, falling back to the
+  // topmost item still visible in the viewport (so `r` works before any explicit navigation).
+  function selectedItem() {
+    const current = document.querySelector('.review-item-current');
+    if (current) return current;
+
+    const items = reviewItems();
+    const threshold = 10;
+    return items.find(el => el.getBoundingClientRect().bottom > threshold) || items[0] || null;
+  }
+
+  // Shared guard for the single-key shortcuts: ignore keypresses aimed at a form field or at
+  // an open modal/review form, and let modified keystrokes through to the browser.
+  function shortcutBlocked(e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return true;
+
+    const tag = document.activeElement?.tagName.toLowerCase();
+    if (tag === 'input' || tag === 'textarea' || tag === 'select') return true;
+
+    const modal = document.getElementById('goto-file-modal');
+    if (modal && modal.classList.contains('active')) return true;
+
+    const reviewForm = document.getElementById('review-form');
+    if (reviewForm && reviewForm.classList.contains('active')) return true;
+
+    return false;
+  }
+
   function scrollToHash(hash) {
     const el = document.querySelector(hash);
     if (el) {
@@ -192,9 +287,14 @@
     setupCommentControls();
     setupReplyButtons();
     setupFileReviewToggles();
+    setupCommitReviewToggles();
+    setupCommitControls();
+    setupCommitHeaderControlHitArea();
+    setupRevisionCompare();
     setupDiffControls();
     setupDirectoryControlClickGuard();
-    setupFileStatsClickGuard();
+    setupHeaderControlHitArea();
+    setupHeaderSelectionGuard();
     setupDirectoryCollapseToggles();
     setupDirectoryReviewAllToggles();
     setupSyntaxToggle();
@@ -202,6 +302,9 @@
     setupFileDeepLinks();
     setupGoToFileModal();
     setupNextUnreviewedShortcut();
+    setupPrevUnreviewedShortcut();
+    setupMarkReviewedShortcut();
+    setupCheckUpdatesShortcut();
     setupFullFileToggle();
     setupRenderedToggle();
     setupLoadingOverlayForNavigations();
@@ -218,19 +321,16 @@
       checkbox.checked = allChecked;
     });
 
-    // Auto-switch to Files tab for historical/cross-revision/explicit-current views
+    // Auto-switch to Review tab for historical/cross-revision/explicit-current views
     // (only if no tab is explicitly set in the URL)
     if (!new URL(window.location).searchParams.has('tab')) {
       if (config.isHistoricalView || config.isCrossRevisionView || config.isCurrentRevisionExplicit) {
-        const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-        if (filesTab) {
-          filesTab.click();
+        const reviewTab = document.querySelector('.pr-tab[data-tab="review"]');
+        if (reviewTab) {
+          reviewTab.click();
         }
       }
     }
-
-    // Revision pill dropdowns
-    setupRevisionDropdowns();
 
     // Dismiss banner
     if (dismissBannerBtn) {
@@ -257,24 +357,6 @@
     hideLoadingOverlay();
   }
 
-  // Compare dropdown
-  function setupRevisionDropdowns() {
-    const toggle = document.querySelector('.compare-dropdown-toggle');
-    const dropdown = document.querySelector('.compare-dropdown');
-    if (!toggle || !dropdown) return;
-
-    toggle.addEventListener('click', (e) => {
-      e.stopPropagation();
-      dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
-    });
-
-    // Close on outside click
-    document.addEventListener('click', () => {
-      if (dropdown) dropdown.style.display = 'none';
-    });
-
-    dropdown.addEventListener('click', (e) => e.stopPropagation());
-  }
 
   // Polling for updates
   function setupPolling() {
@@ -566,8 +648,15 @@
             // Marking reviewed collapses the file — discard its lazy body to free memory
             // (re-fetched on next expand). No-op for non-lazy files.
             discardFileBody(fileEl);
-            // Scroll collapsed file into view so the user can see it and the next file
-            fileEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            // Advance to the next unreviewed file so a fully-collapsed diff can be walked
+            // by checking Reviewed alone. Stay put if nothing is left unreviewed.
+            const next = findNextUnreviewedItem(fileEl);
+            if (next) {
+              goToItem(next);
+            } else {
+              // Scroll collapsed file into view so the user can see where they ended up
+              fileEl.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
           }
         }
 
@@ -583,6 +672,132 @@
         checkbox.checked = !checkbox.checked; // Revert
       }
     });
+  }
+
+  // Commit review toggles. Mirrors setupFileReviewToggles: persist, collapse, then advance to
+  // the next unreviewed item (which may be another commit, or the first file).
+  function setupCommitReviewToggles() {
+    const commitContainer = document.getElementById('commit-container');
+    if (!commitContainer) return;
+
+    commitContainer.addEventListener('change', async (e) => {
+      const checkbox = e.target.closest('.commit-reviewed-toggle');
+      if (!checkbox) return;
+
+      const sha = checkbox.dataset.commitSha;
+
+      try {
+        const response = await fetch(
+          `/pr/${config.owner}/${config.repo}/${config.prNumber}/commit-review`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ commit_sha: sha })
+          }
+        );
+
+        if (!response.ok) {
+          throw new Error('Server returned ' + response.status);
+        }
+
+        const { reviewed } = await response.json();
+        checkbox.checked = reviewed;
+
+        const entry = checkbox.closest('.commit-entry');
+        if (entry) {
+          entry.classList.toggle('commit-reviewed', reviewed);
+          entry.open = !reviewed;
+          if (reviewed) {
+            const next = findNextUnreviewedItem(entry);
+            if (next) {
+              goToItem(next);
+            } else {
+              entry.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            }
+          }
+        }
+
+        updateReviewProgress();
+      } catch (err) {
+        console.error('Failed to toggle commit review:', err);
+        checkbox.checked = !checkbox.checked; // Revert
+      }
+    });
+  }
+
+  // Push History comparison: tick two revisions and the diff between them loads as soon as the
+  // second one lands. Selection order is irrelevant — the pair is always ordered earlier→later
+  // before navigating, which is the order the cross-revision view expects.
+  //
+  // In a cross-revision view the active pair renders pre-checked, so ticking a third revision
+  // has to mean "start a new pair" rather than silently comparing an arbitrary two of three.
+  function setupRevisionCompare() {
+    const table = document.querySelector('.push-history-table');
+    if (!table) return;
+
+    const hint = document.getElementById('push-history-hint');
+    const idleHint = hint ? hint.textContent : '';
+
+    table.addEventListener('change', (e) => {
+      const toggle = e.target.closest('.revision-compare-toggle');
+      if (!toggle) return;
+
+      let checked = Array.from(table.querySelectorAll('.revision-compare-toggle:checked'));
+
+      // A third tick restarts the selection from the revision just clicked.
+      if (checked.length > 2) {
+        checked.forEach(cb => { if (cb !== toggle) cb.checked = false; });
+        checked = [toggle];
+      }
+
+      table.querySelectorAll('.push-history-row').forEach(row => {
+        row.classList.remove('push-history-row-selected');
+      });
+      checked.forEach(cb => {
+        const row = cb.closest('.push-history-row');
+        if (row) row.classList.add('push-history-row-selected');
+      });
+
+      if (checked.length < 2) {
+        if (hint) {
+          hint.textContent = checked.length === 1
+            ? 'Now tick a second revision to compare against.'
+            : idleHint;
+        }
+        return;
+      }
+
+      // Revisions are listed newest-first, so the *higher* index is the earlier push.
+      const picked = checked.map(cb => ({
+        id: cb.dataset.revId,
+        index: parseInt(cb.dataset.revIndex, 10),
+      }));
+      const earlier = picked[0].index > picked[1].index ? picked[0] : picked[1];
+      const later = picked[0].index > picked[1].index ? picked[1] : picked[0];
+
+      if (hint) hint.textContent = 'Comparing…';
+      showLoadingOverlay();
+      window.location.href =
+        `/pr/${config.owner}/${config.repo}/${config.prNumber}` +
+        `?tab=review&from_revision=${earlier.id}&to_revision=${later.id}`;
+    });
+  }
+
+  // Expand/collapse every commit message body at once.
+  function setupCommitControls() {
+    const expandBtn = document.getElementById('expand-all-commits');
+    const collapseBtn = document.getElementById('collapse-all-commits');
+
+    if (expandBtn) {
+      expandBtn.addEventListener('click', () => {
+        document.querySelectorAll('.commit-entry').forEach(el => { el.open = true; });
+      });
+    }
+    if (collapseBtn) {
+      collapseBtn.addEventListener('click', () => {
+        document.querySelectorAll('.commit-entry').forEach(el => { el.open = false; });
+      });
+    }
   }
 
   // Static review-progress totals are computed once and cached. The file set and per-file
@@ -604,8 +819,23 @@
   }
 
   function updateReviewProgress() {
+    // The section counters live in the Review tab and update even when the sidebar progress
+    // panel is absent (historical views), so they're refreshed before the early return.
+    const commitTotal = document.querySelectorAll('.commit-reviewed-toggle').length;
+    const commitReviewed = document.querySelectorAll('.commit-reviewed-toggle:checked').length;
+    const fileTotal = document.querySelectorAll('.file-reviewed-toggle').length;
+    const fileReviewed = document.querySelectorAll('.file-reviewed-toggle:checked').length;
+
+    const commitsCountEl = document.getElementById('commits-section-count');
+    if (commitsCountEl) commitsCountEl.textContent = `${commitReviewed} / ${commitTotal} reviewed`;
+    const filesCountEl = document.getElementById('files-section-count');
+    if (filesCountEl) filesCountEl.textContent = `${fileReviewed} / ${fileTotal} reviewed`;
+
     const panel = document.getElementById('review-progress-panel');
     if (!panel) return;
+
+    const commitsEl = document.getElementById('review-progress-commits');
+    if (commitsEl) commitsEl.textContent = commitReviewed;
 
     const { totalLines, linesByPath } = getReviewProgressTotals();
     const checked = document.querySelectorAll('.file-reviewed-toggle:checked');
@@ -689,14 +919,80 @@
     }
   }
 
-  // Prevent clicks on file-stats checkboxes (Reviewed, Syntax, Full File, Rendered)
-  // from toggling the parent <details>. Same pattern as setupDirectoryControlClickGuard.
-  function setupFileStatsClickGuard() {
+  // Selecting text in a file header (e.g. dragging across the path to copy it) ends in a
+  // click on the <summary>, which would collapse/expand the file. Toggling is the summary's
+  // default action, so cancelling the click in the bubble phase suppresses it — and the
+  // selection survives. A plain click leaves the selection collapsed and toggles as usual.
+  // Document-level rather than diff-container-level: commit subjects are selectable text in a
+  // <summary> too, so they need the same protection.
+  function setupHeaderSelectionGuard() {
+    document.addEventListener('click', (e) => {
+      const summary = e.target.closest('summary');
+      if (summary && hasSelectionWithin(summary)) e.preventDefault();
+    });
+  }
+
+  // True when a non-empty text selection lives inside `el` — i.e. this click is the tail end
+  // of a drag-select, not a plain click. A plain click leaves the selection collapsed.
+  function hasSelectionWithin(el) {
+    const selection = window.getSelection();
+    if (!selection || selection.isCollapsed || !selection.toString().trim()) return false;
+    return el.contains(selection.anchorNode) || el.contains(selection.focusNode);
+  }
+
+  const HEADER_CONTROL_SELECTOR =
+    '.syntax-checkbox, .full-file-checkbox, .rendered-checkbox, .file-review-checkbox';
+
+  // Make each header control (Reviewed / Full file / Rendered / Syntax) a single hit target:
+  // a click anywhere in its padded box toggles the checkbox and never collapses the file.
+  //
+  // We cancel the click outright rather than just stopping propagation. Toggling a <details>
+  // is the <summary>'s activation behaviour, which is the click's *default action* — only
+  // preventDefault reliably cancels it; stopPropagation is a browser-dependent accident.
+  // Cancelling also suppresses the native checkbox change and the <label>'s click-forwarding,
+  // so we drive the checkbox ourselves and every path below produces exactly one toggle.
+  function setupHeaderControlHitArea() {
     if (!diffContainer) return;
-    diffContainer.querySelectorAll('.file-stats').forEach(stats => {
-      stats.addEventListener('click', (e) => {
-        e.stopPropagation();
-      });
+
+    diffContainer.addEventListener('click', (e) => {
+      const stats = e.target.closest('.file-header .file-stats');
+      if (!stats) return;
+
+      // Nothing in the stats area should ever collapse the file, including the +/- counts.
+      e.preventDefault();
+
+      const control = e.target.closest(HEADER_CONTROL_SELECTOR);
+      if (!control) return;
+
+      const input = control.querySelector('input[type="checkbox"]');
+      if (!input || input.disabled) return;
+
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  // The commit-header counterpart of setupHeaderControlHitArea: a click anywhere in the meta
+  // area toggles Reviewed (or does nothing) but never expands/collapses the commit message.
+  // The sha link is exempt — it has to navigate.
+  function setupCommitHeaderControlHitArea() {
+    const commitContainer = document.getElementById('commit-container');
+    if (!commitContainer) return;
+
+    commitContainer.addEventListener('click', (e) => {
+      const meta = e.target.closest('.commit-entry-header .commit-entry-meta');
+      if (!meta || e.target.closest('a')) return;
+
+      e.preventDefault();
+
+      const control = e.target.closest('.commit-review-checkbox');
+      if (!control) return;
+
+      const input = control.querySelector('input[type="checkbox"]');
+      if (!input || input.disabled) return;
+
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event('change', { bubbles: true }));
     });
   }
 
@@ -947,17 +1243,24 @@
       const link = e.target.closest('.file-deep-link');
       if (!link) return;
 
+      // Drag-selecting the file path ends in a click on the link — don't treat that as a
+      // navigation (it would expand the file and clobber the selection).
+      if (hasSelectionWithin(link)) {
+        e.preventDefault();
+        return;
+      }
+
       e.preventDefault();
       const hash = link.getAttribute('href');
       const url = new URL(window.location);
-      url.searchParams.set('tab', 'files');
+      url.searchParams.set('tab', 'review');
       url.hash = hash;
       history.replaceState(null, '', url);
 
-      // Ensure the Files tab is active
-      const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-      if (filesTab && !filesTab.classList.contains('active')) {
-        filesTab.click();
+      // Ensure the Review tab is active
+      const reviewTab = document.querySelector('.pr-tab[data-tab="review"]');
+      if (reviewTab && !reviewTab.classList.contains('active')) {
+        reviewTab.click();
       }
 
       // Expand and scroll to the target file
@@ -974,10 +1277,13 @@
     const hash = window.location.hash;
     if (hash && (hash.startsWith('#file-') || hash.startsWith('#comment-'))) {
       revealHashTarget(hash);
+    } else if (hash && hash.startsWith('#commit-')) {
+      const commitEl = document.querySelector(hash);
+      if (commitEl) goToItem(commitEl);
     }
   }
 
-  // Go to file modal
+  // Go to commit/file modal
   function setupGoToFileModal() {
     const overlay = document.getElementById('goto-file-overlay');
     const modal = document.getElementById('goto-file-modal');
@@ -986,23 +1292,42 @@
     if (!overlay || !modal || !input || !resultsList) return;
 
     let selectedIndex = 0;
-    let filteredFiles = [];
+    let filtered = [];
 
-    function getFiles() {
-      const els = document.querySelectorAll('.diff-file');
-      const files = [];
-      els.forEach(el => {
+    // Both kinds of review item are searchable. `haystack` is what the query filters on:
+    // the path for a file, subject + short sha for a commit.
+    function getItems() {
+      return reviewItems().map(el => {
+        if (el.classList.contains('commit-entry')) {
+          const sha = el.dataset.commitSha || '';
+          const subject = el.dataset.subject || '';
+          const short = sha.slice(0, 7);
+          return {
+            kind: 'commit',
+            el,
+            label: subject,
+            sha: short,
+            hash: '#commit-' + short,
+            haystack: (subject + ' ' + short).toLowerCase(),
+            reviewed: isItemReviewed(el),
+          };
+        }
         const path = el.dataset.path;
         const fileId = el.dataset.fileId;
-        const reviewed = el.classList.contains('file-reviewed');
-        if (path && fileId) files.push({ path, fileId, el, reviewed });
-      });
-      return files;
+        if (!path || !fileId) return null;
+        return {
+          kind: 'file',
+          el,
+          label: path,
+          hash: '#file-' + fileId,
+          haystack: path.toLowerCase(),
+          reviewed: isItemReviewed(el),
+        };
+      }).filter(Boolean);
     }
 
     function openModal() {
-      const allFiles = getFiles();
-      filteredFiles = allFiles;
+      filtered = getItems();
       selectedIndex = 0;
       input.value = '';
       renderResults();
@@ -1018,23 +1343,31 @@
 
     function renderResults() {
       resultsList.innerHTML = '';
-      filteredFiles.forEach((file, i) => {
+      filtered.forEach((item, i) => {
         const li = document.createElement('li');
         li.className = 'goto-file-result' + (i === selectedIndex ? ' selected' : '');
-        const lastSlash = file.path.lastIndexOf('/');
+
         let nameHtml;
-        if (lastSlash >= 0) {
-          const dir = file.path.substring(0, lastSlash + 1);
-          const name = file.path.substring(lastSlash + 1);
-          nameHtml = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
+        if (item.kind === 'commit') {
+          nameHtml = '<span class="goto-item-kind">commit</span>' +
+            '<span class="goto-file-dir">' + escapeHtml(item.sha) + ' </span>' +
+            escapeHtml(item.label);
         } else {
-          nameHtml = escapeHtml(file.path);
+          const lastSlash = item.label.lastIndexOf('/');
+          if (lastSlash >= 0) {
+            const dir = item.label.substring(0, lastSlash + 1);
+            const name = item.label.substring(lastSlash + 1);
+            nameHtml = '<span class="goto-file-dir">' + escapeHtml(dir) + '</span>' + escapeHtml(name);
+          } else {
+            nameHtml = escapeHtml(item.label);
+          }
         }
-        const icon = file.reviewed
+
+        const icon = item.reviewed
           ? '<span class="goto-file-status reviewed" title="Reviewed">✓</span>'
           : '<span class="goto-file-status" title="Not reviewed">○</span>';
         li.innerHTML = '<span class="goto-file-name">' + nameHtml + '</span>' + icon;
-        li.addEventListener('click', () => navigateToFile(file));
+        li.addEventListener('click', () => navigateToItem(item));
         resultsList.appendChild(li);
       });
     }
@@ -1045,54 +1378,38 @@
       return div.innerHTML;
     }
 
-    function filterFiles(query) {
-      const allFiles = getFiles();
+    function filterItems(query) {
+      const all = getItems();
       if (!query.trim()) {
-        filteredFiles = allFiles;
+        filtered = all;
       } else {
         const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
-        filteredFiles = allFiles.filter(f => {
-          const lower = f.path.toLowerCase();
-          return tokens.every(t => lower.includes(t));
-        });
+        filtered = all.filter(item => tokens.every(t => item.haystack.includes(t)));
       }
       selectedIndex = 0;
       renderResults();
     }
 
-    function navigateToFile(file) {
+    function navigateToItem(item) {
       closeModal();
 
-      // Switch to Files tab
-      const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-      if (filesTab && !filesTab.classList.contains('active')) {
-        filesTab.click();
-      }
-
-      // Expand parent directories
-      let parent = file.el.parentElement?.closest('details.diff-directory');
-      while (parent) {
-        parent.open = true;
-        parent = parent.parentElement?.closest('details.diff-directory');
-      }
-
-      // Expand file
-      file.el.open = true;
-      file.el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      // Same navigation as the `n`/`p` shortcuts: expand, mark current (so the selection
+      // border shows and `r` marks this item reviewed) and scroll to it.
+      goToItem(item.el);
 
       // Update hash
       const url = new URL(window.location);
-      url.searchParams.set('tab', 'files');
-      url.hash = '#file-' + file.fileId;
+      url.searchParams.set('tab', 'review');
+      url.hash = item.hash;
       history.replaceState(null, '', url);
     }
 
-    input.addEventListener('input', () => filterFiles(input.value));
+    input.addEventListener('input', () => filterItems(input.value));
 
     input.addEventListener('keydown', (e) => {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
-        if (selectedIndex < filteredFiles.length - 1) {
+        if (selectedIndex < filtered.length - 1) {
           selectedIndex++;
           renderResults();
           const sel = resultsList.querySelector('.selected');
@@ -1108,8 +1425,8 @@
         }
       } else if (e.key === 'Enter') {
         e.preventDefault();
-        if (filteredFiles[selectedIndex]) {
-          navigateToFile(filteredFiles[selectedIndex]);
+        if (filtered[selectedIndex]) {
+          navigateToItem(filtered[selectedIndex]);
         }
       } else if (e.key === 'Escape') {
         e.preventDefault();
@@ -1120,71 +1437,101 @@
     overlay.addEventListener('click', closeModal);
 
     document.addEventListener('keydown', (e) => {
-      if (e.key === 'g' && !modal.classList.contains('active')) {
-        const tag = document.activeElement?.tagName.toLowerCase();
-        if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-        // Don't trigger if review form is open
-        const reviewForm = document.getElementById('review-form');
-        if (reviewForm && reviewForm.classList.contains('active')) return;
-        e.preventDefault();
-        openModal();
-      }
+      if (e.key !== 'g') return;
+      if (shortcutBlocked(e)) return;
+      e.preventDefault();
+      openModal();
     });
   }
 
-  // Next unreviewed file shortcut
+  // Next unreviewed item shortcut — walks commits, then files, in document order.
   function setupNextUnreviewedShortcut() {
     document.addEventListener('keydown', (e) => {
       if (e.key !== 'n') return;
-
-      // Don't trigger in form elements
-      const tag = document.activeElement?.tagName.toLowerCase();
-      if (tag === 'input' || tag === 'textarea' || tag === 'select') return;
-
-      // Don't trigger if go-to-file modal is open
-      const modal = document.getElementById('goto-file-modal');
-      if (modal && modal.classList.contains('active')) return;
-
-      // Don't trigger if review form is open
-      const reviewForm = document.getElementById('review-form');
-      if (reviewForm && reviewForm.classList.contains('active')) return;
+      if (shortcutBlocked(e)) return;
 
       e.preventDefault();
 
-      const unreviewed = document.querySelectorAll('.diff-file:not(.file-reviewed)');
+      const unreviewed = unreviewedItems();
       if (unreviewed.length === 0) return;
 
-      // Find the first unreviewed file whose top is below the current scroll position
+      // Find the first unreviewed item whose top is below the current scroll position
       const threshold = 10;
       let target = null;
-      for (const file of unreviewed) {
-        if (file.getBoundingClientRect().top > threshold) {
-          target = file;
+      for (const item of unreviewed) {
+        if (item.getBoundingClientRect().top > threshold) {
+          target = item;
           break;
         }
       }
 
-      // Wrap around to the first unreviewed file if none found below
+      // Wrap around to the first unreviewed item if none found below
       if (!target) {
         target = unreviewed[0];
       }
 
-      // Switch to Files tab if not already active
-      const filesTab = document.querySelector('.pr-tab[data-tab="files"]');
-      if (filesTab && !filesTab.classList.contains('active')) {
-        filesTab.click();
+      goToItem(target);
+    });
+  }
+
+  // Previous unreviewed item shortcut
+  function setupPrevUnreviewedShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'p') return;
+      if (shortcutBlocked(e)) return;
+
+      e.preventDefault();
+
+      const unreviewed = unreviewedItems();
+      if (unreviewed.length === 0) return;
+
+      // Find the last unreviewed item whose top is above the current scroll position
+      const threshold = -10;
+      let target = null;
+      for (const item of unreviewed) {
+        if (item.getBoundingClientRect().top < threshold) {
+          target = item;
+        } else {
+          break;
+        }
       }
 
-      // Expand parent directories
-      let parent = target.parentElement?.closest('details.diff-directory');
-      while (parent) {
-        parent.open = true;
-        parent = parent.parentElement?.closest('details.diff-directory');
+      // Wrap around to the last unreviewed item if none found above
+      if (!target) {
+        target = unreviewed[unreviewed.length - 1];
       }
 
-      // Expand the file and scroll to it
-      target.open = true;
-      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      goToItem(target);
+    });
+  }
+
+  // Mark the selected item reviewed. Clicking the checkbox reuses the existing change handler
+  // (file or commit), which persists the state, collapses the item and advances to the next
+  // unreviewed one.
+  function setupMarkReviewedShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'r') return;
+      if (shortcutBlocked(e)) return;
+
+      const itemEl = selectedItem();
+      if (!itemEl) return;
+
+      const checkbox = itemCheckbox(itemEl);
+      if (!checkbox) return;
+
+      e.preventDefault();
+      checkbox.click();
+    });
+  }
+
+  // Check for updates shortcut
+  function setupCheckUpdatesShortcut() {
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'c') return;
+      if (shortcutBlocked(e)) return;
+
+      e.preventDefault();
+      checkForUpdates();
     });
   }
 

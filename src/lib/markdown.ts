@@ -2,6 +2,7 @@ import path from 'node:path';
 import { marked } from 'marked';
 import { nameToEmoji } from 'gemoji';
 import { getHighlighterInstance } from './syntax-highlighter.js';
+import { bump } from './perf-counters.js';
 
 // Configure marked for safe rendering with GitHub-flavored markdown
 // NOTE: Async work (syntax highlighting) is done in walkTokens, which runs
@@ -20,10 +21,16 @@ marked.use({
         const highlighter = await getHighlighterInstance();
         const loadedLanguages = highlighter.getLoadedLanguages();
         if (loadedLanguages.includes(token.lang as any)) {
+          // Counted alongside diff highlighting: a PR with many fenced code blocks in its
+          // comments pays real Shiki time here, and it is not cached anywhere.
+          const start = performance.now();
           token._highlighted = highlighter.codeToHtml(token.text, {
             lang: token.lang,
             theme: 'github-light',
           });
+          bump('shikiMs', performance.now() - start);
+          bump('shikiCalls', 1);
+          bump('linesTokenized', token.text.split('\n').length);
         }
       } catch (err) {
         console.error('Markdown code highlighting failed:', err);

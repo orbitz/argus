@@ -1,6 +1,7 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit } from '../lib/github.js';
+import { createUserOctokit, fetchReviews, getApprovers } from '../lib/github.js';
+import { buildStacks } from '../lib/stacks.js';
 import { config } from '../config.js';
 
 export async function repoRoutes(fastify: FastifyInstance) {
@@ -77,26 +78,57 @@ export async function repoRoutes(fastify: FastifyInstance) {
           per_page: 50,
         });
 
+        const login = request.user!.login;
+
+        // Approval state per PR. Failures (e.g. permissions) degrade to "not approved".
+        const approvals = await Promise.all(
+          pulls.map(async (pr) => {
+            try {
+              const approvers = getApprovers(await fetchReviews(octokit, owner, repo, pr.number));
+              return {
+                approved: approvers.includes(login),
+                otherApprovers: approvers.filter((l) => l !== login),
+              };
+            } catch (err: any) {
+              // Degrade to "not approved", but never silently — a swallowed failure
+              // here is indistinguishable from a PR that genuinely has no approvals.
+              console.error(`Failed to fetch reviews for PR #${pr.number}:`, err.status, err.message);
+              return { approved: false, otherApprovers: [] as string[] };
+            }
+          })
+        );
+
+        const enrichedPulls = pulls.map((pr, i) => ({
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          draft: pr.draft,
+          user: {
+            login: pr.user?.login || 'unknown',
+            avatarUrl: pr.user?.avatar_url || '',
+          },
+          createdAt: pr.created_at,
+          updatedAt: pr.updated_at,
+          headRef: pr.head.ref,
+          baseRef: pr.base.ref,
+          // Only same-repo PRs participate in stack linking (see buildStacks). A null
+          // head.repo (deleted branch) or a fork resolves to false.
+          sameRepo: pr.head.repo?.full_name === pr.base.repo?.full_name,
+          approved: approvals[i].approved,
+          otherApprovers: approvals[i].otherApprovers,
+        }));
+
+        // Group into stacks (chains/trees linked by base<-head branch) + standalone PRs.
+        const { stacks, standalone } = buildStacks(enrichedPulls);
+
         return reply.view('pulls', {
           title: `Pull Requests - ${owner}/${repo} - Argus`,
           user: request.user,
           owner,
           repo,
           state,
-          pulls: pulls.map((pr) => ({
-            number: pr.number,
-            title: pr.title,
-            state: pr.state,
-            draft: pr.draft,
-            user: {
-              login: pr.user?.login || 'unknown',
-              avatarUrl: pr.user?.avatar_url || '',
-            },
-            createdAt: pr.created_at,
-            updatedAt: pr.updated_at,
-            headRef: pr.head.ref,
-            baseRef: pr.base.ref,
-          })),
+          stacks,
+          standalone,
         });
       } catch (err: any) {
         console.error('Error fetching PRs:', err);

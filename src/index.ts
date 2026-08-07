@@ -4,6 +4,7 @@ import fastifyView from '@fastify/view';
 import fastifyStatic from '@fastify/static';
 import fastifyCookie from '@fastify/cookie';
 import fastifyFormbody from '@fastify/formbody';
+import fastifyCompress from '@fastify/compress';
 import ejs from 'ejs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
@@ -13,7 +14,11 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { initDb, closeDb, query } from './db/index.js';
 import { cleanupOctokit, initOctokit } from './lib/github.js';
-import { cleanupGitProcesses } from './lib/git.js';
+import { evictExpiredCache } from './lib/api-cache.js';
+import { getHighlighterInstance } from './lib/syntax-highlighter.js';
+import { warmHighlightPool } from './lib/highlight-pool.js';
+import { startPrefetch, stopPrefetch } from './lib/prefetch.js';
+import { cleanupGitProcesses, setGitLogger } from './lib/git.js';
 import { authRoutes } from './routes/auth.js';
 import { homeRoutes } from './routes/home.js';
 import { prRoutes } from './routes/pr.js';
@@ -30,15 +35,19 @@ const isDev = process.env.NODE_ENV !== 'production';
 // `--import tsx/esm` loader from the dev runner. An in-process stream avoids
 // the worker thread entirely while keeping the same pretty output.
 // pino-pretty is a devDependency, so only import it when actually in dev.
+// LOG_LEVEL=debug surfaces the per-git-command timings from lib/git.ts, which is how you tell
+// a cold repo (one slow network fetch) from a warm one (several wasted local spawns).
+const logLevel = process.env.LOG_LEVEL || 'info';
+
 const logger = isDev
   ? pino(
-      { level: 'info' },
+      { level: logLevel },
       (await import('pino-pretty')).default({
         translateTime: 'HH:MM:ss Z',
         ignore: 'pid,hostname',
       })
     )
-  : pino({ level: 'info' }); // Plain JSON logging in production
+  : pino({ level: logLevel }); // Plain JSON logging in production
 
 const fastify = Fastify({ logger });
 
@@ -53,7 +62,13 @@ async function start() {
     // Initialize Octokit singleton
     initOctokit(config.githubToken);
 
+    // Let git.ts report per-command timings (visible at LOG_LEVEL=debug).
+    setGitLogger(fastify.log);
+
     // Register plugins
+    // Rendered diffs are large HTML tables that compress extremely well.
+    await fastify.register(fastifyCompress, { global: true, encodings: ['br', 'gzip', 'deflate'] });
+
     await fastify.register(fastifyCookie);
 
     await fastify.register(fastifyFormbody);
@@ -70,6 +85,10 @@ async function start() {
     await fastify.register(fastifyStatic, {
       root: join(__dirname, '..', 'public'),
       prefix: '/static/',
+      // Previously served with max-age=0, so pr.js (56 KB) was revalidated on every
+      // navigation. Assets still carry ETags, so a deploy is picked up on the next
+      // revalidation after this window.
+      maxAge: '5m',
     });
 
     // Add auth context to all requests
@@ -84,20 +103,43 @@ async function start() {
     await fastify.register(dashboardRoutes);
     await fastify.register(notificationRoutes);
 
-    // Clean up old file reviews on startup and daily
-    const cleanupOldFileReviews = () => {
+    // Clean up old file reviews and expired cache rows on startup and daily.
+    // api_cache previously grew without bound, so writes got slower over time.
+    const runDailyCleanup = () => {
       try {
         query(`DELETE FROM file_reviews WHERE reviewed_at < datetime('now', '-30 days')`);
       } catch (err) {
         console.error('Failed to clean up old file reviews:', err);
       }
+      try {
+        evictExpiredCache();
+      } catch (err) {
+        console.error('Failed to evict expired api_cache rows:', err);
+      }
+      try {
+        query(`DELETE FROM diff_cache WHERE fetched_at < datetime('now', '-7 days')`);
+      } catch (err) {
+        console.error('Failed to clean up old diff cache:', err);
+      }
     };
-    cleanupOldFileReviews();
-    setInterval(cleanupOldFileReviews, 24 * 60 * 60 * 1000);
+    runDailyCleanup();
+    // unref so a pending timer never holds the process open during shutdown.
+    setInterval(runDailyCleanup, 24 * 60 * 60 * 1000).unref();
+
+    // Load Shiki's WASM engine and grammars now rather than inside the first PR render.
+    // In watch mode this cost was paid again after every restart. The pool's workers each
+    // build their own highlighter, so they need the same treatment — otherwise the first PR
+    // after a restart pays ~1s of grammar loading on every worker at once.
+    getHighlighterInstance().catch((err: unknown) =>
+      fastify.log.warn({ err }, 'Shiki pre-warm failed; will initialize on first use')
+    );
+    warmHighlightPool();
 
     // Start server
     await fastify.listen({ port: config.port, host: config.host });
     console.log(`Server running at http://${config.host}:${config.port}`);
+
+    startPrefetch(fastify.log);
   } catch (err) {
     fastify.log.error(err);
     process.exit(1);
@@ -123,6 +165,9 @@ async function shutdown(signal: string) {
   }, 3000);
 
   try {
+    // 0. Stop background cache warming so it can't start new work mid-shutdown
+    stopPrefetch();
+
     // 1. Close Fastify server (stops accepting new connections)
     await fastify.close();
     console.log(`Fastify closed (${Date.now() - shutdownStart}ms)`);

@@ -3,6 +3,20 @@ import type { ChildProcess } from 'child_process';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname, join } from 'path';
 import { config } from '../config.js';
+import { bump } from './perf-counters.js';
+
+/**
+ * Optional logger for per-command timing. Set once at startup (see src/index.ts); left unset
+ * this module stays silent, which keeps tests and scripts that import git.ts free of logging.
+ */
+interface GitLogger {
+  debug(obj: Record<string, unknown>, msg: string): void;
+}
+let gitLogger: GitLogger | null = null;
+
+export function setGitLogger(logger: GitLogger): void {
+  gitLogger = logger;
+}
 
 // Track active git processes for cleanup during shutdown
 const activeProcesses = new Set<ChildProcess>();
@@ -15,16 +29,49 @@ interface CrossDiffCacheEntry {
 
 const crossDiffCache = new Map<string, CrossDiffCacheEntry>();
 
+// Cache for getFullContextPatches results (keyed by owner/repo:fromSha..toSha)
+interface FullContextCacheEntry {
+  data: Map<string, string>;
+  // Paths this entry is known to have looked at, or null when it covers the whole diff.
+  // A path may be absent from `data` and still be covered (binary, or over the line cap).
+  covered: Set<string> | null;
+  lastAccessed: number;
+}
+
+const fullContextCache = new Map<string, FullContextCacheEntry>();
+
+// Repos whose `origin` is already configured for a given authenticated URL, and the setups
+// currently in flight. See ensureRepo.
+const configuredRepos = new Set<string>();
+const repoSetups = new Map<string, Promise<void>>();
+
+// Objects known to be present locally, keyed `repoPath\0sha`. Only positive results are
+// cached: an object never disappears from the cache repo, but a missing one becomes present
+// as soon as something fetches it.
+const localObjects = new Set<string>();
+
+// merge-base results, keyed `repoPath\0ref1\0ref2`. Commits are immutable, so the answer for
+// a pair of SHAs never changes once we have found it.
+const mergeBaseCache = new Map<string, string>();
+
 const CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const CACHE_EVICT_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
+// Both hold nothing but short strings, so the cap is about bounding a long-lived process
+// rather than reclaiming much: drop everything and let it refill from git.
+const SHA_CACHE_MAX_ENTRIES = 50_000;
+
 setInterval(() => {
   const now = Date.now();
-  for (const [key, entry] of crossDiffCache) {
-    if (now - entry.lastAccessed > CACHE_MAX_AGE_MS) {
-      crossDiffCache.delete(key);
+  for (const cache of [crossDiffCache, fullContextCache]) {
+    for (const [key, entry] of cache) {
+      if (now - entry.lastAccessed > CACHE_MAX_AGE_MS) {
+        cache.delete(key);
+      }
     }
   }
+  if (localObjects.size > SHA_CACHE_MAX_ENTRIES) localObjects.clear();
+  if (mergeBaseCache.size > SHA_CACHE_MAX_ENTRIES) mergeBaseCache.clear();
 }, CACHE_EVICT_INTERVAL_MS).unref();
 
 export interface GitCommandResult {
@@ -62,18 +109,56 @@ export function sanitizeError(message: string, token: string): string {
 }
 
 /**
+ * Subcommands that talk to the remote. Counted separately because a slow local spawn and a
+ * slow network fetch call for completely different fixes.
+ */
+const NETWORK_SUBCOMMANDS = new Set(['fetch', 'clone', 'ls-remote', 'push']);
+
+/**
  * Execute a git command with timeout
  */
 async function execGit(
   args: string[],
   cwd: string,
   token?: string,
-  timeout: number = config.git.commandTimeout
+  timeout: number = config.git.commandTimeout,
+  options?: { noLazyFetch?: boolean }
 ): Promise<GitCommandResult> {
+  const startedAt = performance.now();
+  const isNetwork = NETWORK_SUBCOMMANDS.has(args[0]);
+
+  // Record on both the success and failure paths — a git command that fails slowly (a fetch
+  // that times out) is exactly the kind of thing we're hunting for. Guarded because the
+  // timeout path calls cleanup() and then kills the process, which fires 'close' and calls
+  // cleanup() a second time.
+  let recorded = false;
+  const record = () => {
+    if (recorded) return;
+    recorded = true;
+    const elapsed = performance.now() - startedAt;
+    bump('gitSpawns', 1);
+    bump('gitMs', elapsed);
+    if (isNetwork) {
+      bump('gitNetworkSpawns', 1);
+      bump('gitNetworkMs', elapsed);
+    }
+    gitLogger?.debug(
+      { args: token ? args.map((a) => sanitizeError(a, token)) : args, cwd, ms: Math.round(elapsed), network: isNetwork },
+      'git command'
+    );
+  };
+
   return new Promise((resolve, reject) => {
     const proc = spawn('git', args, {
       cwd,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0' },
+      env: {
+        ...process.env,
+        GIT_TERMINAL_PROMPT: '0',
+        // Local-only commands opt out of the promisor remote. Without this a command that
+        // touches a missing object silently turns into a network round trip — an existence
+        // check that should cost 5ms instead costs seconds and reports success.
+        ...(options?.noLazyFetch ? { GIT_NO_LAZY_FETCH: '1' } : {}),
+      },
     });
 
     // Track the process
@@ -87,6 +172,7 @@ async function execGit(
     const cleanup = () => {
       clearTimeout(timer);
       activeProcesses.delete(proc);
+      record();
     };
 
     const timer = setTimeout(() => {
@@ -139,8 +225,32 @@ async function execGit(
  */
 export async function ensureRepo(owner: string, repo: string, token: string): Promise<void> {
   const repoPath = getRepoPath(owner, repo);
-  const parentDir = dirname(repoPath);
   const authUrl = buildAuthUrl(owner, repo, token);
+
+  // Every git entry point calls this, so a single PR render used to pay for the same four
+  // spawns four times over. The configuration is process-stable: once we have written this
+  // exact remote URL we only need to redo it if the token rotates (different URL) or the
+  // cache directory is wiped from under us. Concurrent callers share one setup rather than
+  // racing each other through the same `git config` writes.
+  const key = `${repoPath}\0${authUrl}`;
+  if (configuredRepos.has(key) && existsSync(repoPath)) return;
+
+  const inflight = repoSetups.get(key);
+  if (inflight) return inflight;
+
+  const setup = setupRepo(repoPath, authUrl, token)
+    .then(() => {
+      configuredRepos.add(key);
+    })
+    .finally(() => {
+      repoSetups.delete(key);
+    });
+  repoSetups.set(key, setup);
+  return setup;
+}
+
+async function setupRepo(repoPath: string, authUrl: string, token: string): Promise<void> {
+  const parentDir = dirname(repoPath);
 
   // Create parent directory if needed
   if (!existsSync(parentDir)) {
@@ -211,11 +321,23 @@ export async function fetchRefs(
 }
 
 /**
- * Check if a ref/SHA already exists in the local repo
+ * Check if a ref/SHA already exists in the local repo.
+ *
+ * Runs with lazy fetching disabled: `origin` is a promisor remote, so without that a
+ * cat-file for a missing object quietly fetches it over the network — turning the check
+ * this function exists to make cheap into the most expensive thing in the request, and
+ * hiding the cost from the network counters. We want a fast local "no" so the caller can
+ * batch both refs into a single depth-limited `fetchRefs`.
  */
 async function hasRef(repoPath: string, sha: string, token?: string): Promise<boolean> {
+  const key = `${repoPath}\0${sha}`;
+  if (localObjects.has(key)) return true;
+
   try {
-    await execGit(['cat-file', '-t', sha], repoPath, token);
+    await execGit(['cat-file', '-e', `${sha}^{object}`], repoPath, token, undefined, {
+      noLazyFetch: true,
+    });
+    localObjects.add(key);
     return true;
   } catch {
     return false;
@@ -257,6 +379,9 @@ export async function computeMergeBase(
   token: string
 ): Promise<string> {
   const repoPath = getRepoPath(owner, repo);
+  const cacheKey = `${repoPath}\0${ref1}\0${ref2}`;
+  const cachedBase = mergeBaseCache.get(cacheKey);
+  if (cachedBase) return cachedBase;
 
   await ensureRepo(owner, repo, token);
 
@@ -281,6 +406,8 @@ export async function computeMergeBase(
   if (!mergeBase) {
     throw new Error(`Failed to compute merge-base: no common ancestor found within depth ${depth}`);
   }
+
+  mergeBaseCache.set(cacheKey, mergeBase);
   return mergeBase;
 }
 
@@ -315,6 +442,113 @@ export async function computeRangeDiff(
   } catch (err: any) {
     throw new Error(`Failed to compute range-diff: ${sanitizeError(err.message, token)}`);
   }
+}
+
+/**
+ * Split the output of a multi-file `git diff` into per-file patches.
+ *
+ * Returns [filename, patch] pairs in diff order, where the patch starts at the first `@@`
+ * line. A file with no `@@` at all (binary, mode-only change) yields `undefined` so callers
+ * can still see that the file was touched.
+ */
+function splitDiffByFile(diffOutput: string): Array<[string, string | undefined]> {
+  const out: Array<[string, string | undefined]> = [];
+
+  for (const fileDiff of diffOutput.split(/^diff --git /m).slice(1)) {
+    const lines = fileDiff.split('\n');
+    // Extract filename from the diff header: "a/path b/path"
+    const headerMatch = lines[0].match(/^a\/(.*?) b\/(.*)$/);
+    if (!headerMatch) continue;
+    const filename = headerMatch[2];
+
+    // Find where the patch starts (after the header lines)
+    let patchStartIdx = -1;
+    for (let i = 1; i < lines.length; i++) {
+      if (lines[i].startsWith('@@')) {
+        patchStartIdx = i;
+        break;
+      }
+    }
+
+    out.push([
+      filename,
+      patchStartIdx >= 0 ? lines.slice(patchStartIdx).join('\n').trimEnd() : undefined,
+    ]);
+  }
+
+  return out;
+}
+
+/**
+ * Full-context (`-U99999`) patches for every file changed between two commits, keyed by
+ * filename.
+ *
+ * Used as *tokenizer context* for syntax highlighting, never for display: a full-context
+ * patch contains every line of both sides of the file, so `del + context` reconstructs the
+ * complete old file and `add + context` the complete new one. Highlighting against those
+ * instead of against the gapped diff is what stops a block comment closed inside an elided
+ * region from bleeding into every hunk below it.
+ *
+ * One `git diff` for the whole PR rather than one per file: the diff machinery prefetches
+ * all the blobs it is missing in a single round trip, which a per-file `git show` on our
+ * blobless clone would not.
+ *
+ * Files whose full-context patch exceeds `config.diff.fullContextMaxLines` are omitted —
+ * tokenizing a huge generated file to colour a three-line change is not worth it, and the
+ * caller falls back to per-hunk highlighting.
+ */
+export async function getFullContextPatches(
+  owner: string,
+  repo: string,
+  fromSha: string,
+  toSha: string,
+  token: string,
+  paths?: string[]
+): Promise<Map<string, string>> {
+  const cacheKey = `${owner}/${repo}:${fromSha}..${toSha}`;
+  const cached = fullContextCache.get(cacheKey);
+  // A filtered entry only answers requests it already covers — an unfiltered caller asking
+  // for every file must not be handed one built for a single path.
+  if (cached && (cached.covered === null || (paths && paths.every((p) => cached.covered!.has(p))))) {
+    cached.lastAccessed = Date.now();
+    return cached.data;
+  }
+
+  const repoPath = getRepoPath(owner, repo);
+
+  await ensureRepo(owner, repo, token);
+
+  const refsToFetch: string[] = [];
+  if (!await hasRef(repoPath, fromSha, token)) refsToFetch.push(fromSha);
+  if (!await hasRef(repoPath, toSha, token)) refsToFetch.push(toSha);
+  if (refsToFetch.length > 0) await fetchRefs(owner, repo, refsToFetch, token, config.git.shallowDepth);
+
+  const filtered = paths !== undefined && paths.length > 0;
+  const pathArgs = filtered ? ['--', ...paths] : [];
+  const result = await execGit(
+    ['diff', '-U99999', '--no-color', fromSha, toSha, ...pathArgs],
+    repoPath,
+    token
+  );
+
+  const patches = new Map<string, string>();
+  for (const [filename, patch] of splitDiffByFile(result.stdout)) {
+    if (!patch) continue;
+    if (patch.split('\n').length > config.diff.fullContextMaxLines) continue;
+    patches.set(filename, patch);
+  }
+
+  // Accumulate across filtered runs (a lazily-expanded PR asks one path at a time) rather
+  // than letting each one throw away what the last learned.
+  const merged = cached && cached.covered !== null
+    ? new Map([...cached.data, ...patches])
+    : patches;
+  const covered = filtered
+    ? new Set([...(cached?.covered ?? []), ...paths])
+    : null;
+  fullContextCache.set(cacheKey, { data: merged, covered, lastAccessed: Date.now() });
+
+  return merged;
 }
 
 /**
@@ -411,26 +645,7 @@ export async function computeCrossDiff(
     patch?: string;
   }> = [];
 
-  const diffOutput = diffResult.stdout;
-  const fileDiffs = diffOutput.split(/^diff --git /m).slice(1);
-
-  for (const fileDiff of fileDiffs) {
-    const lines = fileDiff.split('\n');
-    // Extract filename from the diff header: "a/path b/path"
-    const headerMatch = lines[0].match(/^a\/(.*?) b\/(.*)$/);
-    if (!headerMatch) continue;
-    const filename = headerMatch[2];
-
-    // Find where the patch starts (after the header lines)
-    let patchStartIdx = -1;
-    for (let i = 1; i < lines.length; i++) {
-      if (lines[i].startsWith('@@')) {
-        patchStartIdx = i;
-        break;
-      }
-    }
-
-    const patch = patchStartIdx >= 0 ? lines.slice(patchStartIdx).join('\n').trimEnd() : undefined;
+  for (const [filename, patch] of splitDiffByFile(diffResult.stdout)) {
     const stats = statsMap.get(filename) || { additions: 0, deletions: 0 };
 
     files.push({
