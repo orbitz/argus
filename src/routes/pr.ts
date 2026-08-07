@@ -33,6 +33,7 @@ import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
 import { computeMergeBase, computeRangeDiff, computeCrossDiff, computeCrossRevisionDiff, getFullFileDiff, getFullContextPatches } from '../lib/git.js';
 import { getReviewedFiles, toggleFileReview, markFileReviewed, markFileUnreviewed } from '../lib/file-reviews.js';
+import { getReviewedCommits, toggleCommitReview } from '../lib/commit-reviews.js';
 import { buildFileTree } from '../lib/file-tree-builder.js';
 
 interface PRParams {
@@ -53,7 +54,11 @@ export async function prRoutes(fastify: FastifyInstance) {
 
       const { owner, repo, number } = request.params;
       const prNumber = parseInt(number, 10);
-      const activeTab = (request.query as { tab?: string }).tab || 'conversation';
+      // 'files' and 'commits' were separate tabs before the two were merged into Review.
+      // Old links (and bookmarks) still carry them, so both normalize to the new tab.
+      const rawTab = (request.query as { tab?: string }).tab;
+      const activeTab =
+        rawTab === 'files' || rawTab === 'commits' ? 'review' : rawTab || 'conversation';
       const revisionParam = (request.query as { revision?: string }).revision;
       const isCurrentRevisionExplicit = revisionParam === 'current';
       const fromRevisionParam = (request.query as { from_revision?: string }).from_revision;
@@ -170,6 +175,12 @@ export async function prRoutes(fastify: FastifyInstance) {
           ? getReviewedFiles(request.user.githubUserId, owner, repo, prNumber, fileShaMap)
           : [];
         const reviewedFilesSet = new Set(reviewedFiles);
+
+        // Get reviewed commits for this user and PR
+        const reviewedCommits = request.user
+          ? getReviewedCommits(request.user.githubUserId, owner, repo, prNumber)
+          : [];
+        const reviewedCommitsSet = new Set(reviewedCommits);
 
 
         // Get syntax highlighting preference (default: true)
@@ -603,6 +614,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           pollIntervalMs: config.ui.pollIntervalMs,
           config,
           reviewedFiles,
+          reviewedCommits,
+          reviewedCommitsSet,
           totalLines,
           reviewedLines,
           activeTab,
@@ -785,7 +798,7 @@ export async function prRoutes(fastify: FastifyInstance) {
         );
         invalidateCache(prCacheKeys(owner, repo, prNumber));
 
-        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=files`);
+        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=review`);
       } catch (err: any) {
         console.error('Error submitting review:', err);
         return reply.view('error', {
@@ -843,7 +856,7 @@ export async function prRoutes(fastify: FastifyInstance) {
         );
         invalidateCache(prCacheKeys(owner, repo, prNumber));
 
-        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=files#comment-${commentId}`);
+        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=review#comment-${commentId}`);
       } catch (err: any) {
         console.error('Error creating inline comment:', err);
         return reply.view('error', {
@@ -938,6 +951,43 @@ export async function prRoutes(fastify: FastifyInstance) {
         return reply.send({ reviewed: isReviewed });
       } catch (err: any) {
         console.error('Error toggling file review:', err);
+        return reply.status(500).send({ error: 'Failed to toggle review' });
+      }
+    }
+  );
+
+  // Toggle commit review status
+  fastify.post(
+    '/pr/:owner/:repo/:number/commit-review',
+    async (
+      request: FastifyRequest<{
+        Params: PRParams;
+        Body: { commit_sha: string };
+      }>,
+      reply: FastifyReply
+    ) => {
+      if (!requireAuth(request, reply)) return;
+
+      const { owner, repo, number } = request.params;
+      const { commit_sha } = request.body;
+      const prNumber = parseInt(number, 10);
+
+      if (!commit_sha) {
+        return reply.status(400).send({ error: 'Missing required fields' });
+      }
+
+      try {
+        const isReviewed = toggleCommitReview(
+          request.user!.githubUserId,
+          owner,
+          repo,
+          prNumber,
+          commit_sha
+        );
+
+        return reply.send({ reviewed: isReviewed });
+      } catch (err: any) {
+        console.error('Error toggling commit review:', err);
         return reply.status(500).send({ error: 'Failed to toggle review' });
       }
     }

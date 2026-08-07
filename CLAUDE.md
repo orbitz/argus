@@ -98,6 +98,10 @@ SQLite with WAL mode. Key tables:
 - **diff_cache** - Rendered diff HTML cache per file
 - **pr_revisions** - Timeline of PR head SHAs (force push detection)
 - **user_preferences** - User settings (e.g., skip range-diff confirmation)
+- **file_reviews** - Per-user "reviewed" state per file, keyed on blob SHA so it survives
+  revisions that don't touch the file
+- **commit_reviews** - Per-user "reviewed" state per commit. No invalidation needed: a commit
+  SHA is its content, so rewritten commits simply start unreviewed
 
 Migrations in `migrations/` directory, applied on startup.
 
@@ -132,7 +136,9 @@ BASE_URL=http://localhost:3000
 
 **`public/js/pr.js`** - Progressive enhancement for PR view
 - Polling for PR updates (shows banner when head SHA changes)
-- Vim keybindings for file navigation (j/k/o/Enter in Files tab)
+- Keyboard shortcuts over "review items" — commits and files are treated alike, in document
+  order (commits first): `g` go-to modal, `n`/`p` next/previous unreviewed, `r` toggle
+  reviewed, `c` check for updates. The selected item carries `.review-item-current`
 - Inline comment form toggling
 - Expand/collapse all comments
 - Reply button handlers (mention vs quote reply)
@@ -142,7 +148,9 @@ BASE_URL=http://localhost:3000
 
 EJS templates in `src/templates/`. Key templates:
 
-- **pr.ejs** - Main PR review page (conversation, commits, files tabs)
+- **pr.ejs** - Main PR review page. Tabs: Conversation, Checks, Review. The Review tab holds
+  two sections — Commits (expandable messages, each markable reviewed) then Files. Legacy
+  `?tab=files` / `?tab=commits` links normalize to `review` in the route handler
 - **layout.ejs** - Base HTML wrapper with common header/footer
 - **range-diff.ejs** - Force push comparison view
 

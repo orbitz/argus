@@ -260,6 +260,23 @@
       border-bottom-color: #0066cc;
     }
 
+    .tab-pill {
+      display: inline-block;
+      background: #ddd;
+      color: #444;
+      font-weight: 400;
+      font-size: 0.8rem;
+      padding: 0.125rem 0.5rem;
+      border-radius: 10px;
+      margin-left: 0.25rem;
+      vertical-align: middle;
+    }
+
+    .pr-tab.active .tab-pill {
+      background: #ddeaf7;
+      color: #0550ae;
+    }
+
     .pr-tab-content {
       display: none;
     }
@@ -723,6 +740,7 @@
           <div id="review-progress-bar" style="background: #0969da; height: 100%; border-radius: 3px; transition: width 0.3s ease; width: <%= totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0 %>%;"></div>
         </div>
         <div style="font-size: 0.8rem; color: #656d76; line-height: 1.6;">
+          <div><span id="review-progress-commits"><%= reviewedCommits.length %></span> / <%= commits.length %> commits</div>
           <div><span id="review-progress-files"><%= reviewedFiles.length %></span> / <%= files.length %> files</div>
           <div><span id="review-progress-lines"><%= reviewedLines %></span> / <%= totalLines %> lines</div>
         </div>
@@ -738,10 +756,10 @@
       <div class="keyboard-help" style="margin-top: 1rem;">
         <h3 style="font-size: 0.8rem; color: #666; text-transform: uppercase;">Keyboard shortcuts</h3>
         <div class="keyboard-shortcuts">
-          <div class="keyboard-shortcut"><kbd>g</kbd> <span>Go to file</span></div>
-          <div class="keyboard-shortcut"><kbd>n</kbd> <span>Next unreviewed file</span></div>
-          <div class="keyboard-shortcut"><kbd>p</kbd> <span>Previous unreviewed file</span></div>
-          <div class="keyboard-shortcut"><kbd>r</kbd> <span>Toggle file reviewed</span></div>
+          <div class="keyboard-shortcut"><kbd>g</kbd> <span>Go to commit or file</span></div>
+          <div class="keyboard-shortcut"><kbd>n</kbd> <span>Next unreviewed item</span></div>
+          <div class="keyboard-shortcut"><kbd>p</kbd> <span>Previous unreviewed item</span></div>
+          <div class="keyboard-shortcut"><kbd>r</kbd> <span>Toggle reviewed</span></div>
           <div class="keyboard-shortcut"><kbd>c</kbd> <span>Check for updates</span></div>
         </div>
       </div>
@@ -802,14 +820,16 @@
       <!-- Tabs -->
       <div class="pr-tabs">
         <button class="pr-tab <%= activeTab === 'conversation' ? 'active' : '' %>" data-tab="conversation">Conversation</button>
-        <button class="pr-tab <%= activeTab === 'commits' ? 'active' : '' %>" data-tab="commits">Commits <span style="background: #ddd; padding: 0.125rem 0.5rem; border-radius: 10px; margin-left: 0.25rem;"><%= pr.commits %></span></button>
         <button class="pr-tab <%= activeTab === 'checks' ? 'active' : '' %>" data-tab="checks">
           Checks
           <% if (checksSummary.total > 0) { %>
             <span style="background: <%= checksSummary.state === 'success' ? '#2da44e' : checksSummary.state === 'failure' ? '#cf222e' : '#856404' %>; color: white; padding: 0.125rem 0.5rem; border-radius: 10px; margin-left: 0.25rem;"><%= checksSummary.total %></span>
           <% } %>
         </button>
-        <button class="pr-tab <%= activeTab === 'files' ? 'active' : '' %>" data-tab="files">Files changed <span style="background: #ddd; padding: 0.125rem 0.5rem; border-radius: 10px; margin-left: 0.25rem;"><%= files.length %></span></button>
+        <button class="pr-tab <%= activeTab === 'review' ? 'active' : '' %>" data-tab="review">Review
+          <span class="tab-pill" title="Commits in this PR"><%= commits.length %> commits</span>
+          <span class="tab-pill" title="Files changed"><%= files.length %> files</span>
+        </button>
       </div>
 
       <!-- Conversation Tab -->
@@ -988,52 +1008,6 @@
         </div>
       </div>
 
-      <!-- Commits Tab -->
-      <div class="pr-tab-content <%= activeTab === 'commits' ? 'active' : '' %>" data-tab-content="commits">
-        <% if (revisions && revisions.length > 1) { %>
-          <details style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd;">
-            <summary style="cursor: pointer; font-size: 0.95rem; margin-bottom: 0.5rem; user-select: none;">
-              Force Push History (<%= revisions.length %> revisions)
-            </summary>
-            <p style="color: #666; font-size: 0.85rem; margin: 0.75rem 0;">Click range-diff to see what changed between force pushes</p>
-            <ul class="commits-list">
-              <% revisions.forEach((rev, i) => { %>
-                <li class="commit-item">
-                  <div class="commit-header">
-                    <span style="font-size: 0.85rem; color: #666; min-width: 4rem; display: inline-block;"><%= i === 0 ? 'current' : 'rev ' + (revisions.length - i) %></span>
-                    <span class="commit-sha" style="<%= i === 0 ? 'font-weight: 600;' : '' %>"><%= rev.head_sha.slice(0, 7) %></span>
-                    <span style="color: #666; font-size: 0.85rem; margin-left: 0.5rem;"><%= new Date(rev.seen_at).toLocaleString() %></span>
-                    <% if (i < revisions.length - 1) { %>
-                      <% const olderRev = revisions[i+1]; %>
-                      <a style="margin-left: 0.5rem; font-size: 0.85rem; color: #0066cc; text-decoration: none;" href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/range-diff/<%= olderRev.id %>/<%= rev.id %>">range-diff</a>
-                    <% } %>
-                  </div>
-                </li>
-              <% }) %>
-            </ul>
-          </details>
-        <% } %>
-
-        <h2 style="font-size: 0.95rem; margin-bottom: 0.5rem;">Current Commits (<%= commits.length %>)</h2>
-        <ul class="commits-list">
-          <% commits.forEach(commit => { %>
-            <li class="commit-item">
-              <div class="commit-header">
-                <a href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/commit/<%= commit.sha %>" style="text-decoration: none; color: inherit;">
-                  <h3 class="commit-message" style="cursor: pointer; color: #0066cc;"><%= commit.commit.message.split('\n')[0] %></h3>
-                </a>
-                <a href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/commit/<%= commit.sha %>" class="commit-sha">
-                  <%= commit.sha.slice(0, 7) %>
-                </a>
-              </div>
-              <div class="commit-author">
-                <%= commit.commit.author.name %> committed on <%= new Date(commit.commit.author.date).toLocaleDateString() %>
-              </div>
-            </li>
-          <% }) %>
-        </ul>
-      </div>
-
       <!-- Checks Tab -->
       <div class="pr-tab-content <%= activeTab === 'checks' ? 'active' : '' %>" data-tab-content="checks">
         <div style="padding: 1rem 0;">
@@ -1155,61 +1129,153 @@
         </div>
       </div>
 
-      <!-- Files Changed Tab -->
-      <div class="pr-tab-content <%= activeTab === 'files' ? 'active' : '' %>" data-tab-content="files">
-        <div class="pr-files">
-          <h2>Files changed (<%= files.length %>)</h2>
-          <% if (revisions && revisions.length > 1) { %>
-            <div style="display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; padding: 0.5rem 0.75rem; background: #f6f8fa; border: 1px solid #ddd; border-radius: 6px; font-size: 0.85rem; flex-wrap: wrap;">
-              <span style="color: #666; font-weight: 600;">Revision:</span>
-              <% const sortedRevs = [...revisions].reverse(); %>
-              <% sortedRevs.forEach((rev, i) => { %>
-                <% const isLast = i === sortedRevs.length - 1; %>
-                <% const label = isLast ? 'Current' : String(i + 1); %>
-                <% const isSelected = isHistoricalView ? rev.id === selectedRevisionId : (isCrossRevisionView ? (rev.id === fromRevisionId || rev.id === toRevisionId) : isLast); %>
-                <% const isFromRev = isCrossRevisionView && rev.id === fromRevisionId; %>
-                <% const isToRev = isCrossRevisionView && rev.id === toRevisionId; %>
-                <% const pillBg = isFromRev ? '#8250df' : isToRev ? '#0969da' : (isSelected ? '#0969da' : 'white'); %>
-                <% const pillColor = isSelected ? 'white' : '#0969da'; %>
-                <% const pillHref = isLast ? '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=current' : '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=' + rev.id; %>
-                <a href="<%= pillHref %>" style="background: <%= pillBg %>; color: <%= pillColor %>; padding: 0.125rem 0.5rem; border-radius: 3px; text-decoration: none; border: 1px solid <%= isSelected ? pillBg : '#ddd' %>; font-weight: <%= isSelected ? '600' : 'normal' %>;"><%= label %></a>
-              <% }) %>
-              <%
-                // Determine which revision index is currently active
-                let currentRevIndex = sortedRevs.length - 1; // default: last = Current
-                if (isHistoricalView && selectedRevisionId) {
-                  currentRevIndex = sortedRevs.findIndex(r => r.id === selectedRevisionId);
-                }
-                const currentRevId = sortedRevs[currentRevIndex].id;
-                const isOnLastRevision = currentRevIndex === sortedRevs.length - 1;
-                const hasLaterRevisions = currentRevIndex < sortedRevs.length - 1;
-              %>
-              <% if (!isCrossRevisionView) { %>
-                <div style="position: relative; display: inline-block; margin-left: 0.5rem;">
-                  <span class="compare-dropdown-toggle" style="padding: 0.125rem 0.5rem; border-radius: 3px; cursor: <%= hasLaterRevisions ? 'pointer' : 'default' %>; border: 1px solid #ddd; background: white; color: <%= hasLaterRevisions ? '#0969da' : '#999' %>; user-select: none; <%= !hasLaterRevisions ? 'opacity: 0.5;' : '' %>">Compare to...</span>
-                  <% if (hasLaterRevisions) { %>
-                    <div class="compare-dropdown" style="display: none; position: absolute; top: 100%; left: 0; margin-top: 4px; background: white; border: 1px solid #ddd; border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,0.15); z-index: 100; min-width: 200px; padding: 0.25rem 0;">
-                      <% for (let ti = currentRevIndex + 1; ti < sortedRevs.length; ti++) { %>
-                        <% const toRev = sortedRevs[ti]; %>
-                        <% const toLabel = ti === sortedRevs.length - 1 ? 'Current' : 'Revision ' + String(ti + 1); %>
-                        <a href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>?from_revision=<%= currentRevId %>&to_revision=<%= toRev.id %>" style="display: block; padding: 0.375rem 0.75rem; color: #0969da; text-decoration: none; font-size: 0.85rem; white-space: nowrap;"><%= toLabel %> <span style="color: #999; font-family: monospace; font-size: 0.8rem;">(<%= toRev.head_sha.slice(0, 7) %>)</span></a>
-                      <% } %>
-                    </div>
-                  <% } %>
-                </div>
-              <% } %>
-              <% if (isCrossRevisionView) { %>
-                <%
-                  const fromRevForReset = sortedRevs.find(r => r.id === fromRevisionId);
-                  const fromIsCurrentHead = fromRevForReset && fromRevForReset.head_sha === pr.head.sha;
-                  const resetHref = fromIsCurrentHead
-                    ? '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=current'
-                    : '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=' + fromRevisionId;
-                %>
-                <a href="<%= resetHref %>" style="margin-left: 0.5rem; padding: 0.125rem 0.5rem; border-radius: 3px; color: #cf222e; text-decoration: none; border: 1px solid #cf222e; font-size: 0.85rem;">Reset</a>
+      <!-- Review Tab: push history, commits, then files -->
+      <div class="pr-tab-content <%= activeTab === 'review' ? 'active' : '' %>" data-tab-content="review">
+
+        <!-- Push History. Deliberately outside the historical/cross-revision guard below:
+             comparing two pushes lands you in the cross-revision view, and you need this
+             picker there to choose a different pair. -->
+        <% if (revisions && revisions.length > 1) { %>
+          <%
+            // Reset returns to whichever single revision you were comparing from.
+            const fromRevForReset = isCrossRevisionView
+              ? revisions.find(r => r.id === fromRevisionId)
+              : null;
+            const resetHref = fromRevForReset && fromRevForReset.head_sha !== pr.head.sha
+              ? '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=' + fromRevisionId
+              : '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=current';
+          %>
+          <details class="push-history" <%= (isCrossRevisionView || isHistoricalView) ? 'open' : '' %>>
+            <summary>Push History (<%= revisions.length %> revisions)</summary>
+            <div class="push-history-toolbar">
+              <p class="push-history-hint" id="push-history-hint">Tick any two revisions to diff them — the order you pick doesn't matter.</p>
+              <% if (isCrossRevisionView || isHistoricalView) { %>
+                <a class="push-history-reset" href="<%= resetHref %>"><%= isCrossRevisionView ? 'Reset comparison' : 'Back to current' %></a>
               <% } %>
             </div>
-          <% } %>
+            <table class="push-history-table">
+              <thead>
+                <tr>
+                  <th>Revision</th>
+                  <th>SHA</th>
+                  <th>Seen</th>
+                  <th class="push-history-compare-col">Compare</th>
+                </tr>
+              </thead>
+              <tbody>
+                <% revisions.forEach((rev, i) => { %>
+                  <% const isHead = rev.head_sha === pr.head.sha; %>
+                  <% const revLabel = i === 0 ? 'current' : 'rev ' + (revisions.length - i); %>
+                  <% const revHref = isHead
+                       ? '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=current'
+                       : '/pr/' + owner + '/' + repo + '/' + pr.number + '?revision=' + rev.id; %>
+                  <% const isFromRev = isCrossRevisionView && rev.id === fromRevisionId; %>
+                  <% const isToRev = isCrossRevisionView && rev.id === toRevisionId; %>
+                  <% const inActivePair = isFromRev || isToRev; %>
+                  <% // Which single revision the page is currently showing (never set while comparing) %>
+                  <% const isViewing = !isCrossRevisionView &&
+                       (isHistoricalView ? rev.id === selectedRevisionId : isHead); %>
+                  <tr class="push-history-row <%= inActivePair ? 'push-history-row-selected' : '' %> <%= isViewing ? 'push-history-row-viewing' : '' %>" data-rev-index="<%= i %>">
+                    <td class="push-history-label">
+                      <%= revLabel %>
+                      <% if (isViewing) { %><span class="push-history-badge badge-viewing">viewing</span><% } %>
+                      <% if (isFromRev) { %><span class="push-history-badge badge-from">from</span><% } %>
+                      <% if (isToRev) { %><span class="push-history-badge badge-to">to</span><% } %>
+                    </td>
+                    <td>
+                      <a class="commit-sha" href="<%= revHref %>" title="View this revision (<%= rev.head_sha %>)" style="<%= i === 0 ? 'font-weight: 600;' : '' %>"><%= rev.head_sha.slice(0, 7) %></a>
+                    </td>
+                    <td class="push-history-time"><%= new Date(rev.seen_at).toLocaleString() %></td>
+                    <td class="push-history-compare-col">
+                      <input type="checkbox"
+                             class="revision-compare-toggle"
+                             data-rev-id="<%= rev.id %>"
+                             data-rev-index="<%= i %>"
+                             <%= inActivePair ? 'checked' : '' %>
+                             autocomplete="off"
+                             aria-label="Select <%= revLabel %> for comparison">
+                    </td>
+                  </tr>
+                <% }) %>
+              </tbody>
+            </table>
+          </details>
+        <% } %>
+
+        <!-- Commits. Per-commit review state is only meaningful for the live head, so this
+             section is hidden in historical / cross-revision views, the same way file review
+             state already is. -->
+        <% if (!isHistoricalView && !isCrossRevisionView) { %>
+        <section class="review-section" id="review-commits-section">
+          <header class="review-section-header">
+            <h2>Commits</h2>
+            <span class="review-section-count" id="commits-section-count"><%= reviewedCommits.length %> / <%= commits.length %> reviewed</span>
+            <span class="review-section-actions">
+              <button type="button" id="expand-all-commits" class="btn btn-small">Expand all</button>
+              <button type="button" id="collapse-all-commits" class="btn btn-small">Collapse all</button>
+            </span>
+          </header>
+
+          <div class="commit-container" id="commit-container">
+            <% commits.forEach(commit => { %>
+              <%
+                const message = (commit.commit.message || '').replace(/\r\n/g, '\n');
+                const subject = message.split('\n')[0];
+                const body = message.slice(subject.length).trim();
+                // commit.commit.author is nullable in the GitHub payload; commit.author (the
+                // linked GitHub account) is too. Fall back rather than throwing mid-render.
+                const gitAuthor = commit.commit.author;
+                const authorName = (commit.author && commit.author.login)
+                  || (gitAuthor && gitAuthor.name)
+                  || 'unknown';
+                const isCommitReviewed = reviewedCommitsSet.has(commit.sha);
+                const shortSha = commit.sha.slice(0, 7);
+              %>
+              <details class="commit-entry <%= isCommitReviewed ? 'commit-reviewed' : '' %>"
+                       data-commit-sha="<%= commit.sha %>"
+                       data-subject="<%= subject %>"
+                       id="commit-<%= shortSha %>">
+                <summary class="commit-entry-header">
+                  <span class="commit-entry-info">
+                    <span class="commit-expand-icon <%= body ? '' : 'empty' %>">▶</span>
+                    <span class="commit-subject"><%= subject %></span>
+                  </span>
+                  <span class="commit-entry-meta">
+                    <span class="commit-byline"><%= authorName %><% if (gitAuthor && gitAuthor.date) { %> · <%= new Date(gitAuthor.date).toLocaleDateString() %><% } %></span>
+                    <a class="commit-sha" href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/commit/<%= commit.sha %>"
+                       onclick="event.stopPropagation()" title="View commit diff"><%= shortSha %></a>
+                    <span class="commit-review-checkbox">
+                      <input type="checkbox"
+                             id="commit-reviewed-<%= shortSha %>"
+                             class="commit-reviewed-toggle"
+                             data-commit-sha="<%= commit.sha %>"
+                             <%= isCommitReviewed ? 'checked' : '' %>
+                             autocomplete="off"
+                             title="Mark as reviewed">
+                      <label for="commit-reviewed-<%= shortSha %>">Reviewed</label>
+                    </span>
+                  </span>
+                </summary>
+                <div class="commit-entry-body">
+                  <% if (body) { %><pre class="commit-message-body"><%= body %></pre><% } else { %><div class="commit-no-body">No further description.</div><% } %>
+                </div>
+              </details>
+            <% }) %>
+          </div>
+        </section>
+        <% } %>
+
+        <!-- Section 2: Files -->
+        <section class="review-section" id="review-files-section">
+        <div class="pr-files">
+          <header class="review-section-header">
+            <h2>Files</h2>
+            <% if (!isHistoricalView && !isCrossRevisionView) { %>
+              <span class="review-section-count" id="files-section-count"><%= reviewedFiles.length %> / <%= files.length %> reviewed</span>
+            <% } else { %>
+              <span class="review-section-count"><%= files.length %> changed</span>
+            <% } %>
+          </header>
           <% if (isCrossRevisionView) { %>
             <div style="background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: #0550ae;">
               Comparing revision changes only. Comments and review status are not shown.
@@ -1232,6 +1298,7 @@
             <%- fileTreeHtml %>
           </div>
         </div>
+        </section>
       </div>
     </div>
 
@@ -1430,7 +1497,7 @@
   <!-- Go to file modal -->
   <div id="goto-file-overlay" class="goto-file-overlay"></div>
   <div id="goto-file-modal" class="goto-file-modal">
-    <input type="text" id="goto-file-input" placeholder="Type a filename..." autocomplete="off">
+    <input type="text" id="goto-file-input" placeholder="Type a filename or commit..." autocomplete="off">
     <ul id="goto-file-results"></ul>
   </div>
 

@@ -74,8 +74,8 @@
     <h1><%= owner %>/<%= repo %>#<%= prNumber %></h1>
 
     <% if (revisions.length > 1) { %>
-      <h2>Force Push History (<%= revisions.length %> revisions)</h2>
-      <p style="color: #666; font-size: 0.85rem; margin-bottom: 0.5rem;">Click to see what changed between force pushes</p>
+      <h2>Push History (<%= revisions.length %> revisions)</h2>
+      <p style="color: #666; font-size: 0.85rem; margin-bottom: 0.5rem;">Click to see what changed between pushes</p>
       <ul class="revision-list">
         <% revisions.forEach((rev, i) => { %>
           <li class="revision-item">
