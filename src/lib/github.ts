@@ -28,6 +28,15 @@ export function initOctokit(accessToken: string): Octokit {
           signal: init?.signal ?? AbortSignal.timeout(config.github.requestTimeoutMs),
         }),
     },
+    retry: {
+      // The plugin's default doNotRetry list is [400, 401, 403, 404, 410, 422, 451], so a
+      // 405 or 409 was retried three times with backoff before the error surfaced. Those
+      // two are exactly how GitHub refuses a merge — 405 when branch protection blocks it
+      // ("a required check has not reported", "a review is required"), 409 when the head
+      // moved. Neither can succeed on a retry, so retrying only turns an instant, useful
+      // error into a long wait behind the loading overlay.
+      doNotRetry: [400, 401, 403, 404, 405, 409, 410, 422, 451],
+    },
     throttle: {
       onRateLimit: (retryAfter: number, options: any, _o: unknown, retryCount: number) => {
         if (retryCount < 2) return true;
@@ -399,132 +408,6 @@ export async function fetchReviews(
         headers,
       });
       return { data: response.data, etag: response.headers.etag || null };
-    }
-  );
-  return result.data;
-}
-
-// --- Dashboard via GraphQL ---------------------------------------------------------
-//
-// The REST dashboard cost ~316 requests: one repo list, one pulls list per repo, then
-// two per PR (changed_files + reviews) for up to 150 PRs, funnelled through a
-// concurrency limiter — roughly 19 serialized round-trip waves. GraphQL returns the same
-// data shape in a single request.
-
-export interface DashboardPull {
-  number: number;
-  title: string;
-  author: string;
-  updatedAt: string;
-  draft: boolean;
-  headSha: string;
-  changedFiles: number;
-  reviews: Array<{ state: string; user: { login: string } }>;
-}
-
-export interface DashboardRepo {
-  owner: string;
-  name: string;
-  fullName: string;
-  pulls: DashboardPull[];
-}
-
-const DASHBOARD_QUERY = `
-  query Dashboard($repos: Int!, $prs: Int!) {
-    viewer {
-      repositories(
-        first: $repos
-        orderBy: { field: PUSHED_AT, direction: DESC }
-        affiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
-        # ownerAffiliations is a SEPARATE filter from affiliations, and it defaults to
-        # [OWNER, COLLABORATOR] — which drops every organization-owned repository even
-        # when affiliations includes ORGANIZATION_MEMBER. REST's
-        # repos.listForAuthenticatedUser has no equivalent filter, so it must be widened
-        # here or the dashboard silently loses most org repos.
-        ownerAffiliations: [OWNER, COLLABORATOR, ORGANIZATION_MEMBER]
-      ) {
-        nodes {
-          name
-          nameWithOwner
-          owner { login }
-          pullRequests(
-            first: $prs
-            states: OPEN
-            orderBy: { field: UPDATED_AT, direction: DESC }
-          ) {
-            nodes {
-              number
-              title
-              isDraft
-              updatedAt
-              changedFiles
-              headRefOid
-              author { login }
-              reviews(last: 50) {
-                nodes {
-                  state
-                  author { login }
-                }
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-`;
-
-/**
- * Cache key for the dashboard payload. The version segment is bumped whenever the query
- * changes shape or scope, so a stale entry from an older (in v1's case, wrong) query is
- * never served — stale-while-revalidate would otherwise hand back the old result once
- * more even after the fix shipped.
- *
- * v2: widened ownerAffiliations; v1 silently omitted organization-owned repos.
- */
-export function dashboardCacheKey(login: string): string {
-  return `dashboard:v2:${login}`;
-}
-
-export async function fetchDashboardGraphql(
-  octokit: Octokit,
-  login: string,
-  mode?: CacheMode
-): Promise<DashboardRepo[]> {
-  const result = await cachedFetch<DashboardRepo[]>(
-    dashboardCacheKey(login),
-    { ttlMs: TTL.dashboard, mode },
-    async () => {
-      const response: any = await octokit.graphql(DASHBOARD_QUERY, {
-        repos: config.github.dashboardRepoLimit,
-        prs: config.github.dashboardPrsPerRepo,
-      });
-
-      const repos: DashboardRepo[] = (response?.viewer?.repositories?.nodes ?? [])
-        .filter(Boolean)
-        .map((repo: any): DashboardRepo => ({
-          owner: repo.owner?.login ?? '',
-          name: repo.name,
-          fullName: repo.nameWithOwner,
-          pulls: (repo.pullRequests?.nodes ?? []).filter(Boolean).map((pr: any): DashboardPull => ({
-            number: pr.number,
-            title: pr.title,
-            author: pr.author?.login ?? 'unknown',
-            updatedAt: pr.updatedAt,
-            draft: !!pr.isDraft,
-            headSha: pr.headRefOid ?? '',
-            changedFiles: pr.changedFiles ?? 0,
-            // Reshaped to match the REST review payload so getApprovers() works on both.
-            reviews: (pr.reviews?.nodes ?? [])
-              .filter((r: any) => r?.author?.login)
-              .map((r: any) => ({ state: r.state, user: { login: r.author.login } })),
-          })),
-        }))
-        .filter((repo: DashboardRepo) => repo.pulls.length > 0);
-
-      // GraphQL responses carry no usable ETag, so this is a TTL + stale-while-revalidate
-      // cache rather than a conditional one.
-      return { data: repos, etag: null };
     }
   );
   return result.data;
@@ -917,6 +800,82 @@ export async function fetchReviewRequests(
     }
   );
   return result.data;
+}
+
+/**
+ * Workflow runs on this commit that GitHub is holding until a maintainer approves them.
+ *
+ * These are invisible to the checks API — `GET /commits/{sha}/check-runs` returns an empty
+ * list, because a workflow that was never allowed to start has never reported anything. A
+ * PR from a fork therefore looks like it has no checks at all while GitHub blocks the merge
+ * on a required check that will never arrive. The Actions API is the only place the state
+ * is visible.
+ */
+export interface PendingWorkflowApproval {
+  id: number;
+  name: string;
+}
+
+export async function fetchPendingWorkflowApprovals(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  headSha: string,
+  mode?: CacheMode
+): Promise<PendingWorkflowApproval[]> {
+  const result = await cachedFetch<PendingWorkflowApproval[]>(
+    `workflow-approvals:${owner}/${repo}@${headSha}`,
+    { ttlMs: TTL.checks, mode },
+    async (headers) => {
+      const response = await octokit.actions.listWorkflowRunsForRepo({
+        owner,
+        repo,
+        head_sha: headSha,
+        per_page: 50,
+        headers,
+      });
+
+      const HELD_STATUSES = new Set(['action_required', 'waiting', 'pending']);
+      const pending = (response.data.workflow_runs ?? [])
+        .filter(
+          (run: any) => run.conclusion === 'action_required' || HELD_STATUSES.has(run.status)
+        )
+        .map((run: any) => ({ id: run.id, name: run.name ?? 'workflow' }));
+
+      return { data: pending, etag: response.headers.etag || null };
+    }
+  );
+  return result.data;
+}
+
+/** Cache key for a commit's held workflow runs, so approving can clear it immediately. */
+export function workflowApprovalsKey(owner: string, repo: string, headSha: string): string {
+  return `workflow-approvals:${owner}/${repo}@${headSha}`;
+}
+
+/**
+ * Releases a held workflow run so it can start.
+ *
+ * Returns whether this call is what released it. GitHub answers 403 both when the token
+ * may not approve and when the run is no longer waiting — which is the ordinary outcome of
+ * approving twice, or of approving something a colleague just released. Treating that as
+ * an error reported a failure for work that was already done.
+ */
+export async function approveWorkflowRun(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  runId: number
+): Promise<'approved' | 'already-running'> {
+  try {
+    await octokit.actions.approveWorkflowRun({ owner, repo, run_id: runId });
+    return 'approved';
+  } catch (err: any) {
+    if (err.status === 403 && /not waiting for approval/i.test(err.message ?? '')) {
+      return 'already-running';
+    }
+    throw err;
+  }
 }
 
 // Merge a pull request

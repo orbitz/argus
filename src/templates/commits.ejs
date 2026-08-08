@@ -4,30 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     .commits-page { max-width: 900px; margin: 0 auto; padding: 1rem; }
     .commits-page h1 { font-size: 1.25rem; margin-bottom: 1rem; }
-    .commits-page h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+    .commits-page h2 { font-size: 1rem; margin: 1.5rem 0 0.5rem; border-bottom: 1px solid var(--border); padding-bottom: 0.25rem; }
 
     .revision-list, .commit-list { margin: 0; padding: 0; list-style: none; }
-    .revision-item, .commit-item { padding: 0.375rem 0; border-bottom: 1px solid #eee; font-size: 0.9rem; }
+    .revision-item, .commit-item { padding: 0.375rem 0; border-bottom: 1px solid var(--border-subtle); font-size: 0.9rem; }
     .revision-item:last-child, .commit-item:last-child { border-bottom: none; }
 
-    .revision-label { display: inline-block; min-width: 5em; color: #666; }
+    .revision-label { display: inline-block; min-width: 5em; color: var(--fg-muted); }
     .revision-sha { font-family: monospace; margin-right: 0.5rem; }
-    .revision-time { color: #888; font-size: 0.85rem; margin-right: 0.5rem; }
-    .revision-current { font-weight: 600; color: #008800; }
-    .revision-diff { background: #0066cc; color: #fff; padding: 0.125rem 0.5rem; border-radius: 3px; text-decoration: none; font-size: 0.8rem; }
-    .revision-diff:hover { background: #0055aa; text-decoration: none; }
+    .revision-time { color: var(--fg-subtle); font-size: 0.85rem; margin-right: 0.5rem; }
+    .revision-current { font-weight: 600; color: var(--success); }
+    .revision-diff { background: var(--accent); color: #fff; padding: 0.125rem 0.5rem; border-radius: 3px; text-decoration: none; font-size: 0.8rem; }
+    .revision-diff:hover { background: var(--accent-hover); text-decoration: none; }
 
     .commit-item { display: flex; align-items: baseline; gap: 0.5rem; padding: 0.5rem; border-radius: 4px; transition: background-color 0.2s; }
-    .commit-item:hover { background-color: #f6f8fa; cursor: pointer; }
+    .commit-item:hover { background-color: var(--surface); cursor: pointer; }
     .commit-link { display: flex; align-items: baseline; gap: 0.5rem; flex: 1; text-decoration: none; color: inherit; }
-    .commit-sha { font-family: monospace; color: #0066cc; min-width: 5em; font-weight: 500; }
+    .commit-sha { font-family: monospace; color: var(--accent); min-width: 5em; font-weight: 500; }
     .commit-sha:hover { text-decoration: underline; }
-    .commit-author { color: #666; min-width: 8em; }
-    .commit-msg { color: #222; flex: 1; }
+    .commit-author { color: var(--fg-muted); min-width: 8em; }
+    .commit-msg { color: var(--fg); flex: 1; }
 
     .compare-form { margin-top: 0.5rem; font-size: 0.9rem; }
     .compare-form input { font-family: monospace; width: 7em; padding: 0.125rem 0.25rem; }
@@ -58,7 +59,7 @@
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/dashboard" class="nav-logo">Argus</a>
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <a href="/pr/<%= owner %>/<%= repo %>/<%= prNumber %>">&larr; PR #<%= prNumber %></a>
       <% if (user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
@@ -75,7 +76,7 @@
 
     <% if (revisions.length > 1) { %>
       <h2>Push History (<%= revisions.length %> revisions)</h2>
-      <p style="color: #666; font-size: 0.85rem; margin-bottom: 0.5rem;">Click to see what changed between pushes</p>
+      <p style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">Click to see what changed between pushes</p>
       <ul class="revision-list">
         <% revisions.forEach((rev, i) => { %>
           <li class="revision-item">
@@ -92,11 +93,11 @@
         <% }) %>
       </ul>
     <% } else { %>
-      <p style="color: #666; font-size: 0.9rem;">No force push history yet. Revisions are tracked each time you view this PR.</p>
+      <p style="color: var(--fg-muted); font-size: 0.9rem;">No force push history yet. Revisions are tracked each time you view this PR.</p>
     <% } %>
 
     <h2>Current Commits (<%= commits.length %>)</h2>
-    <p style="color: #666; font-size: 0.85rem; margin-bottom: 0.5rem;">Click any commit to view its changes</p>
+    <p style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">Click any commit to view its changes</p>
     <ul class="commit-list">
       <% commits.forEach((c, i) => { %>
         <li class="commit-item">

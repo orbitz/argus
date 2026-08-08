@@ -4,30 +4,31 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     .repos-page { max-width: 900px; margin: 0 auto; padding: 1rem; }
 
     .repos-header { margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
     .repos-header h1 { margin: 0; font-size: 1.5rem; }
-    .repos-count { color: #666; font-size: 0.9rem; }
+    .repos-count { color: var(--fg-muted); font-size: 0.9rem; }
 
     .search-box { margin-bottom: 1.5rem; }
     .search-input {
       width: 100%;
       padding: 0.625rem 0.875rem;
       font-size: 1rem;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border);
       border-radius: 4px;
       box-sizing: border-box;
     }
     .search-input:focus {
       outline: none;
-      border-color: #0066cc;
+      border-color: var(--accent);
     }
 
     .repos-list { margin: 0; padding: 0; list-style: none; }
-    .repo-item { border-bottom: 1px solid #eee; }
+    .repo-item { border-bottom: 1px solid var(--border-subtle); }
     .repo-item:last-child { border-bottom: none; }
     .repo-item.hidden { display: none; }
 
@@ -39,7 +40,7 @@
       transition: background-color 0.15s;
     }
     .repo-link:hover {
-      background: #f6f8fa;
+      background: var(--surface);
     }
 
     .repo-header-row {
@@ -52,7 +53,7 @@
     .repo-name {
       font-weight: 600;
       font-size: 1.05rem;
-      color: #0066cc;
+      color: var(--accent);
     }
 
     .badge {
@@ -62,14 +63,14 @@
       font-weight: 500;
     }
     .badge-private {
-      background: #fff3cd;
-      color: #856404;
+      background: var(--warning-surface);
+      color: var(--warning);
       border: 1px solid #ffeaa7;
     }
 
     .repo-description {
       margin: 0.375rem 0 0.5rem;
-      color: #666;
+      color: var(--fg-muted);
       font-size: 0.9rem;
       line-height: 1.4;
     }
@@ -78,7 +79,7 @@
       display: flex;
       gap: 1.5rem;
       font-size: 0.85rem;
-      color: #888;
+      color: var(--fg-subtle);
     }
 
     .repo-meta-item {
@@ -90,7 +91,7 @@
     .empty-state {
       text-align: center;
       padding: 4rem 2rem;
-      color: #666;
+      color: var(--fg-muted);
     }
     .empty-state-icon {
       font-size: 3rem;
@@ -102,7 +103,7 @@
     }
     .empty-state-hint {
       font-size: 0.9rem;
-      color: #888;
+      color: var(--fg-subtle);
     }
 
     .nav-links {
@@ -110,7 +111,7 @@
       gap: 1rem;
     }
     .nav-links a {
-      color: #666;
+      color: var(--fg-muted);
       text-decoration: none;
       padding: 0.25rem 0.5rem;
       border-radius: 3px;
@@ -140,7 +141,7 @@
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/dashboard" class="nav-logo">Argus</a>
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <div class="nav-links">
         <a href="/dashboard">Dashboard</a>
       </div>

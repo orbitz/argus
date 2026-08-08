@@ -20,6 +20,9 @@ import {
   replyToReviewComment,
   fetchPRTimeline,
   mergePR,
+  fetchPendingWorkflowApprovals,
+  approveWorkflowRun,
+  workflowApprovalsKey,
   fetchFileContent,
   fetchFileBuffer,
 } from '../lib/github.js';
@@ -539,6 +542,19 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Summarize checks
         const checksSummary = summarizeChecks(checks, combinedStatus);
 
+        // Workflows held for approval live in the Actions API, not the checks API, so this
+        // is a separate request — made only when the PR could plausibly have one, which is
+        // a fork PR or one GitHub is already blocking.
+        const isFork = pr.head?.repo?.full_name !== pr.base?.repo?.full_name;
+        const pendingWorkflows =
+          isFork || pr.mergeable_state === 'blocked'
+            ? await fetchPendingWorkflowApprovals(octokit, owner, repo, pr.head.sha, cacheMode).catch(
+                () => [] as Array<{ id: number; name: string }>
+              )
+            : [];
+
+        const mergeStatus = mergeReadiness(pr, checks, pendingWorkflows.length);
+
         // Render PR body as markdown
         const renderedBody = await span('bodyMarkdownMs', () => renderMarkdown(pr.body));
 
@@ -598,6 +614,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           reviews: renderedReviews,
           timeline,
           checksSummary,
+          mergeStatus,
+          pendingWorkflows,
           checks,
           statuses: combinedStatus.statuses,
           revisions,
@@ -1748,6 +1766,59 @@ export async function prRoutes(fastify: FastifyInstance) {
   );
 
   // Merge PR
+  // Release workflows GitHub is holding on a fork PR. Deliberately a POST with an explicit
+  // button and no shortcut: approving runs a contributor's code on your runners, which is
+  // the exact thing GitHub is asking a human to decide.
+  fastify.post(
+    '/pr/:owner/:repo/:number/approve-workflows',
+    async (
+      request: FastifyRequest<{ Params: PRParams; Body: { run_ids?: string } }>,
+      reply: FastifyReply
+    ) => {
+      if (!requireAuth(request, reply)) return;
+
+      const { owner, repo, number } = request.params;
+      const runIds = (request.body?.run_ids ?? '')
+        .split(',')
+        .map((id) => parseInt(id.trim(), 10))
+        .filter((id) => Number.isFinite(id));
+
+      if (runIds.length === 0) {
+        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=checks`);
+      }
+
+      try {
+        const octokit = createUserOctokit(request.user!.accessToken);
+        for (const runId of runIds) {
+          await approveWorkflowRun(octokit, owner, repo, runId);
+        }
+
+        const prNumber = parseInt(number, 10);
+        invalidateCache(prCacheKeys(owner, repo, prNumber));
+        // The held-run list is keyed by head SHA and is not part of prCacheKeys, so without
+        // this the page would go on offering an Approve button for a run already started.
+        const pr = await fetchPR(octokit, owner, repo, prNumber, 'bypass');
+        invalidateCache([workflowApprovalsKey(owner, repo, pr.head.sha)]);
+
+        return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=checks`);
+      } catch (err: any) {
+        console.error('Error approving workflow runs:', err);
+        // GitHub's own message says what went wrong far better than a guess does — the
+        // previous text blamed the token for every 403, including the common case where
+        // the run had simply already started.
+        const detail = err.message ? ` GitHub said: ${err.message}` : '';
+        return reply.view('error', {
+          title: 'Error - Argus',
+          user: request.user,
+          message:
+            err.status === 403
+              ? `Could not approve these workflow runs. Your token may need write access to Actions on this repository.${detail}`
+              : `Failed to approve workflow runs.${detail}`,
+        });
+      }
+    }
+  );
+
   fastify.post(
     '/pr/:owner/:repo/:number/merge',
     async (
@@ -1799,6 +1870,64 @@ export async function prRoutes(fastify: FastifyInstance) {
       }
     }
   );
+}
+
+/**
+ * Whether GitHub will actually accept a merge, and why not.
+ *
+ * The Checks tab can be entirely green while GitHub still refuses: it lists the checks
+ * that *reported*, and the usual reasons for a refusal are things that never report at
+ * all — a required review, or a required workflow that has not run because a fork's
+ * workflows are waiting for a maintainer to approve them. `mergeable_state` is GitHub's
+ * own verdict and comes free on the PR payload, so it is the honest thing to show next
+ * to a merge button.
+ */
+function mergeReadiness(pr: any, checks: any[], pendingWorkflowCount = 0): {
+  state: string;
+  blocked: boolean;
+  label: string;
+  detail: string;
+} {
+  const actionRequired =
+    pendingWorkflowCount || checks.filter((c) => c.conclusion === 'action_required').length;
+  const isFork = !!pr.head?.repo?.full_name && pr.head.repo.full_name !== pr.base?.repo?.full_name;
+
+  if (pr.draft) {
+    return { state: 'draft', blocked: true, label: 'Draft', detail: 'Mark it ready for review before merging.' };
+  }
+
+  switch (pr.mergeable_state) {
+    case 'clean':
+    case 'has_hooks':
+      return { state: 'clean', blocked: false, label: 'Ready to merge', detail: '' };
+    case 'dirty':
+      return { state: 'dirty', blocked: true, label: 'Conflicts with the base branch', detail: 'Resolve the conflicts before merging.' };
+    case 'behind':
+      return { state: 'behind', blocked: true, label: 'Out of date with the base branch', detail: 'The base branch requires this branch to be updated first.' };
+    case 'unstable':
+      return { state: 'unstable', blocked: false, label: 'Mergeable, but a check is failing or still running', detail: 'GitHub will allow the merge; the failing check is not a required one.' };
+    case 'blocked': {
+      const reasons: string[] = [];
+      if (actionRequired > 0) {
+        reasons.push(
+          `${actionRequired} workflow${actionRequired === 1 ? '' : 's'} waiting for your approval before ${actionRequired === 1 ? 'it' : 'they'} can run`
+        );
+      } else if (isFork) {
+        reasons.push("this PR is from a fork, so its workflows may be waiting for your approval and a required check may never have reported");
+      }
+      reasons.push('a required review may be missing, or a required check may not have reported');
+      return {
+        state: 'blocked',
+        blocked: true,
+        label: 'GitHub is blocking this merge',
+        detail: reasons.join('; ') + '.',
+      };
+    }
+    case 'draft':
+      return { state: 'draft', blocked: true, label: 'Draft', detail: 'Mark it ready for review before merging.' };
+    default:
+      return { state: 'unknown', blocked: false, label: 'Merge state unknown', detail: 'GitHub is still computing whether this can merge.' };
+  }
 }
 
 // Helper to summarize checks status
