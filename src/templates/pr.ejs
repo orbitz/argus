@@ -779,7 +779,10 @@
           <%= pr.title %>
           <span class="pr-number">
             #<%= pr.number %>
-            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>"
+            <%# ?argus=0 is the escape hatch for the github.com proxy setup (docs/github-proxy.md):
+                without it this link resolves back into Argus. GitHub itself ignores the
+                unknown parameter, so the link is unchanged for everyone else. %>
+            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>?argus=0"
                target="_blank"
                rel="noopener"
                class="github-pr-link"

@@ -43,6 +43,21 @@ CACHE_TTL=60                       # API cache TTL in seconds (default: 60)
 BASE_URL=http://localhost:3000     # Base URL for redirects
 ```
 
+## Use It As Your github.com
+
+Argus understands GitHub's own URLs, so `github.com/owner/repo/pull/42` opens the Argus PR
+page and `github.com` itself opens the Argus dashboard — with everything Argus has no view
+for (issues, actions, `git push`, the `gh` CLI) passed through to the real site.
+
+```bash
+deploy/nginx/setup.sh ./deploy/nginx/certs
+docker compose -f docker-compose.yml -f docker-compose.github-proxy.yml up -d
+```
+
+Then point `github.com` at that host in each client's hosts file and trust the generated
+CA. See **[docs/github-proxy.md](docs/github-proxy.md)** — including what trusting that
+certificate means before you do it.
+
 ## Run With Docker
 
 ```bash
