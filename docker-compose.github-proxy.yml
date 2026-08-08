@@ -1,0 +1,32 @@
+# Overlay that puts Argus in front of github.com. See docs/github-proxy.md.
+#
+#   deploy/nginx/setup.sh ./deploy/nginx/certs      # once, to issue certificates
+#   docker compose -f docker-compose.yml -f docker-compose.github-proxy.yml up -d
+#
+# Kept out of docker-compose.yml so a plain `docker compose up` neither binds :443 nor
+# depends on certificates existing.
+
+services:
+  argus:
+    ports:
+      # No port 80: github.com is in every browser's HSTS preload list, so browsers never
+      # try plaintext for it. Leaving 80 free also keeps this clear of any nginx already
+      # running on the host.
+      - "443:443"
+    environment:
+      # Argus is reached as github.com now, not localhost.
+      - BASE_URL=${BASE_URL:-https://github.com}
+
+  nginx:
+    image: nginx:1.27-alpine
+    # Shares the Argus container's network namespace, so the 127.0.0.1:3000 inside
+    # argus-github.conf reaches Argus here exactly as it does on a bare-metal install —
+    # one config file, both deployments. Ports for this service are therefore published
+    # by the argus service, not here.
+    network_mode: "service:argus"
+    depends_on:
+      - argus
+    volumes:
+      - ./deploy/nginx/argus-github.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./deploy/nginx/certs:/etc/nginx/certs:ro
+    restart: unless-stopped

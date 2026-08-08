@@ -25,6 +25,7 @@ import { prRoutes } from './routes/pr.js';
 import { repoRoutes } from './routes/repos.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { githubCompatRoutes } from './routes/github-compat.js';
 import { authMiddleware, initTokenAuth } from './middleware/auth.js';
 
 const isDev = process.env.NODE_ENV !== 'production';
@@ -102,6 +103,9 @@ async function start() {
     await fastify.register(prRoutes);
     await fastify.register(dashboardRoutes);
     await fastify.register(notificationRoutes);
+    // Registered last: these are catch-all-shaped param routes for github.com's own URLs,
+    // and every route above is more specific than they are.
+    await fastify.register(githubCompatRoutes);
 
     // Clean up old file reviews and expired cache rows on startup and daily.
     // api_cache previously grew without bound, so writes got slower over time.

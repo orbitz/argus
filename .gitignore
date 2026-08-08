@@ -31,3 +31,7 @@ coverage/
 
 # Private keys
 *.pem
+
+# Locally-issued certificates for the github.com front end (docs/github-proxy.md).
+# The CA key in here can impersonate any site to machines that trust it.
+deploy/nginx/certs/

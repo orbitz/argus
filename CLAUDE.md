@@ -156,6 +156,26 @@ EJS templates in `src/templates/`. Key templates:
 
 Templates receive data from route handlers and render server-side.
 
+### github.com Front End
+
+Argus can be run in place of github.com (`docs/github-proxy.md`): a hosts entry plus the
+nginx config in `deploy/nginx/argus-github.conf` terminate TLS for github.com locally, send
+the paths Argus owns to Argus, and proxy everything else — git over HTTPS, issues, the `gh`
+CLI — on to the real site. `docker-compose.github-proxy.yml` overlays an nginx container
+that shares the Argus container's network namespace, so one config file serves both the
+Docker and bare-metal deployments.
+
+- **`src/lib/github-url.ts`** - pure mapping from a github.com path + query to an Argus
+  path, or null when Argus has no equivalent. GitHub's Files and Commits tabs both fold
+  into Argus's Review tab
+- **`src/routes/github-compat.ts`** - root-level param routes that 302 to that mapping.
+  Registered last in `index.ts`, since every other route is more specific. Always on, no
+  configuration: it costs nothing when the proxy is not in use
+- `?argus=0` on any URL bypasses Argus at the nginx layer; the "View on GitHub" link in
+  `pr.ejs` carries it, or it would resolve back into Argus
+- The nginx config resolves the upstream github.com through an explicit `resolver` rather
+  than the system one, or the hosts entry would loop it back to itself
+
 ## Key Architectural Decisions
 
 1. **Server-rendered HTML** - No client-side framework, no hydration delay
