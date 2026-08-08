@@ -58,7 +58,11 @@ export const config = {
     // A file-count threshold alone misses the other shape of expensive PR: a handful of
     // files with enormous diffs. Syntax highlighting costs ~0.5ms per line, so 20k changed
     // lines is ~10s of render regardless of how few files they live in.
-    lazyLineThreshold: parseInt(optional('LAZY_DIFF_LINE_THRESHOLD', '5000'), 10),
+    // Measured: a 28-file, ~3,700-changed-line PR rendered 5,447 diff rows into a 4.15 MB
+    // document — served in 95ms, then slow enough in the browser that scrolling and reload
+    // stalled. The threshold was 5000, so a PR of that shape rendered eagerly. Changed
+    // lines undercount the rows actually emitted, since each hunk carries context too.
+    lazyLineThreshold: parseInt(optional('LAZY_DIFF_LINE_THRESHOLD', '2500'), 10),
     // Syntax highlighting tokenizes the whole file, not just the diff, so that constructs
     // closed inside an elided region are still seen (see getFullContextPatches). Past this
     // many lines that stops paying for itself and highlighting falls back to per-hunk.

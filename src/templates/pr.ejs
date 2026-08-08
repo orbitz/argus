@@ -29,8 +29,15 @@
       min-width: 0;
     }
 
+    /* Sticky, like the left sidebar. It holds the merge controls, and on a PR with a few
+       thousand diff rows a non-sticky sidebar scrolls away within the first screen —
+       leaving no way back to the merge button but scrolling the whole diff again. */
     .pr-right-sidebar {
       align-self: start;
+      position: sticky;
+      top: 1rem;
+      max-height: calc(100vh - 2rem);
+      overflow-y: auto;
     }
 
     /* Responsive - Tablet */

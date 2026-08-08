@@ -512,7 +512,9 @@
       const path = lineRow.dataset.path;
       const line = lineRow.dataset.line;
       const side = lineRow.dataset.side;
-      const sha = lineRow.dataset.sha;
+      // The row carries no data-sha any more; the enclosing file does. Rows cached from
+      // before that change still have their own, so prefer it when present.
+      const sha = lineRow.dataset.sha || lineRow.closest('.diff-file')?.dataset.sha;
       if (!path || !line) return;
 
       const fragment = template.content.cloneNode(true);

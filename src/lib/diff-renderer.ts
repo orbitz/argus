@@ -235,9 +235,9 @@ function renderLine(
   const formId = `comment-${lineId}`;
 
   // Comment button - links to the form anchor for no-JS support
-  const commentBtn = commentLine ? `
-    <a href="#${formId}" class="line-comment-btn" title="Add comment" aria-label="Add comment on line ${commentLine}">+</a>
-  ` : '';
+  const commentBtn = commentLine
+    ? `<a href="#${formId}" class="line-comment-btn" aria-label="Add comment on line ${commentLine}">+</a>`
+    : '';
 
   // Syntax highlighting is computed for the whole file up front (see buildHighlightMap);
   // this is just a lookup.
@@ -246,17 +246,10 @@ function renderLine(
       ? highlighted.get(line) ?? escapeHtml(line.content)
       : escapeHtml(line.content);
 
-  return `
-    <tr class="diff-line ${lineClass}" id="${lineId}"
-        data-path="${escapeHtml(path)}"
-        data-line="${commentLine || ''}"
-        data-side="${commentSide}"
-        data-sha="${headSha}">
-      <td class="diff-line-num diff-line-num-old">${oldNum}</td>
-      <td class="diff-line-num diff-line-num-new">${newNum}</td>
-      <td class="diff-line-action">${commentBtn}</td>
-      <td class="diff-line-content"><span class="diff-line-prefix">${prefix}</span>${contentHtml}</td>
-    </tr>`;
+  // No data-sha here: it is identical for every row on the page and already sits on the
+  // enclosing .diff-file, so repeating it cost ~50 bytes a row for nothing. The indentation
+  // is gone for the same reason — it was ~60 bytes of whitespace per row.
+  return `<tr class="diff-line ${lineClass}" id="${lineId}" data-path="${escapeHtml(path)}" data-line="${commentLine || ''}" data-side="${commentSide}"><td class="diff-line-num diff-line-num-old">${oldNum}</td><td class="diff-line-num diff-line-num-new">${newNum}</td><td class="diff-line-action">${commentBtn}</td><td class="diff-line-content"><span class="diff-line-prefix">${prefix}</span>${contentHtml}</td></tr>`;
   // Note: the inline comment form is no longer rendered per-line. It is built on demand
   // in the client from the #inline-comment-form-template (see renderInlineCommentForm and
   // public/js/pr.js). This removes one <form>/<textarea> per commentable line — the single
