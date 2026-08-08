@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <link rel="stylesheet" href="/static/css/pr.css">
   <link rel="stylesheet" href="/static/css/github-markdown-light.css">
@@ -56,7 +57,7 @@
       .pr-right-sidebar {
         position: static;
         order: 2;
-        border-top: 1px solid #ddd;
+        border-top: 1px solid var(--border);
         padding-top: 1rem;
       }
       .pr-main-content {
@@ -136,7 +137,7 @@
     .pr-header {
       margin-bottom: 1rem;
       padding-bottom: 0.75rem;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--border);
       position: relative;
     }
 
@@ -148,7 +149,7 @@
     }
 
     .pr-number {
-      color: #666;
+      color: var(--fg-muted);
       font-weight: normal;
     }
 
@@ -157,7 +158,7 @@
     }
 
     .github-pr-link:hover {
-      color: #0969da !important;
+      color: var(--accent) !important;
     }
 
     /* Responsive adjustment for small mobile */
@@ -172,7 +173,7 @@
     }
 
     .pr-meta {
-      color: #666;
+      color: var(--fg-muted);
       font-size: 0.85rem;
       margin-bottom: 0.5rem;
     }
@@ -183,20 +184,67 @@
       font-weight: 500;
       font-size: 0.8rem;
       margin-right: 0.5rem;
+      text-transform: capitalize;
     }
 
-    .pr-state-open { color: #2da44e; }
-    .pr-state-closed { color: #cf222e; }
-    .pr-state-merged { color: #8250df; }
+    .workflow-approval {
+      display: flex;
+      align-items: flex-start;
+      gap: var(--space-3);
+      flex-wrap: wrap;
+      margin: var(--space-3) 0;
+      padding: var(--space-3);
+      background: var(--warning-surface);
+      border: 1px solid var(--warning-border);
+      border-radius: var(--radius);
+    }
+    .workflow-approval-text { flex: 1; min-width: 15rem; }
+    .workflow-approval-names { font-size: 0.85rem; color: var(--fg-muted); margin-top: 0.15rem; }
+    .workflow-approval-why { font-size: 0.8rem; color: var(--fg-muted); margin-top: var(--space-2); }
+
+    .merge-blocked-note {
+      margin: var(--space-3) 0;
+      padding: var(--space-2) var(--space-3);
+      background: var(--warning-surface);
+      border: 1px solid var(--warning-border);
+      border-radius: var(--radius);
+      font-size: 0.85rem;
+      color: var(--warning);
+    }
+
+    .merge-readiness {
+      margin-bottom: var(--space-2);
+      padding: var(--space-2) var(--space-3);
+      border-radius: var(--radius);
+      font-size: 0.8rem;
+      background: var(--surface);
+      border: 1px solid var(--border);
+    }
+    .merge-readiness-label { display: block; font-weight: 600; }
+    .merge-readiness-detail { color: var(--fg-muted); }
+    .merge-readiness-clean { background: #eaf6ec; border-color: #b7e0c2; }
+    .merge-readiness-clean .merge-readiness-label { color: var(--success); }
+    .merge-readiness-blocked,
+    .merge-readiness-behind,
+    .merge-readiness-draft { background: var(--warning-surface); border-color: var(--warning-border); }
+    .merge-readiness-blocked .merge-readiness-label,
+    .merge-readiness-behind .merge-readiness-label,
+    .merge-readiness-draft .merge-readiness-label { color: var(--warning); }
+    .merge-readiness-dirty { background: var(--danger-surface); border-color: var(--danger-surface); }
+    .merge-readiness-dirty .merge-readiness-label { color: var(--danger); }
+
+    .pr-state-open { color: var(--success-emphasis); }
+    .pr-state-closed { color: var(--danger); }
+    .pr-state-merged { color: var(--merged); }
 
     .badge-draft {
-      color: #666;
+      color: var(--fg-muted);
       font-size: 0.8rem;
       margin-right: 0.5rem;
     }
 
     .ref {
-      background: #f6f8fa;
+      background: var(--surface);
       padding: 0.125rem 0.375rem;
       font-family: monospace;
       font-size: 0.85rem;
@@ -208,9 +256,9 @@
       font-size: 0.85rem;
     }
 
-    .stat { color: #666; }
-    .additions { color: #2da44e; }
-    .deletions { color: #cf222e; }
+    .stat { color: var(--fg-muted); }
+    .additions { color: var(--success-emphasis); }
+    .deletions { color: var(--danger); }
 
     /* Review button top right */
     .review-button-container {
@@ -220,7 +268,7 @@
     }
 
     .btn-review-toggle {
-      background: #2da44e;
+      background: var(--success-emphasis);
       color: white;
       border: none;
       padding: 0.375rem 0.75rem;
@@ -232,62 +280,12 @@
       background: #2c974b;
     }
 
-    /* Tabs */
-    .pr-tabs {
-      display: flex;
-      gap: 0;
-      border-bottom: 1px solid #ddd;
-      margin-bottom: 1rem;
-    }
-
-    .pr-tab {
-      padding: 0.5rem 0.75rem;
-      border: none;
-      background: none;
-      cursor: pointer;
-      font-size: 0.9rem;
-      color: #666;
-      border-bottom: 2px solid transparent;
-    }
-
-    .pr-tab:hover {
-      color: #222;
-    }
-
-    .pr-tab.active {
-      color: #222;
-      font-weight: 600;
-      border-bottom-color: #0066cc;
-    }
-
-    .tab-pill {
-      display: inline-block;
-      background: #ddd;
-      color: #444;
-      font-weight: 400;
-      font-size: 0.8rem;
-      padding: 0.125rem 0.5rem;
-      border-radius: 10px;
-      margin-left: 0.25rem;
-      vertical-align: middle;
-    }
-
-    .pr-tab.active .tab-pill {
-      background: #ddeaf7;
-      color: #0550ae;
-    }
-
-    .pr-tab-content {
-      display: none;
-    }
-
-    .pr-tab-content.active {
-      display: block;
-    }
+    /* Tab component styles live in main.css, shared with the dashboard. The
+       media queries above still tweak them for narrow screens. */
 
     /* Right Sidebar */
     .sidebar-section {
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--border);
       padding-bottom: 1rem;
       margin-bottom: 1rem;
     }
@@ -296,7 +294,7 @@
       margin: 0 0 0.5rem;
       font-size: 0.85rem;
       font-weight: 600;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     .workflow-item {
@@ -305,14 +303,14 @@
     }
 
     .workflow-label {
-      color: #666;
+      color: var(--fg-muted);
       display: inline-block;
       min-width: 60px;
     }
 
     .sha-display {
       font-family: monospace;
-      background: #f6f8fa;
+      background: var(--surface);
       padding: 0.125rem 0.375rem;
       font-size: 0.85rem;
     }
@@ -331,9 +329,9 @@
       margin-bottom: 0.5rem;
     }
 
-    .checks-success { color: #1a7f37; }
-    .checks-failure { color: #cf222e; }
-    .checks-pending { color: #856404; }
+    .checks-success { color: var(--success); }
+    .checks-failure { color: var(--danger); }
+    .checks-pending { color: var(--warning); }
 
     .checks-details {
       font-size: 0.85rem;
@@ -341,7 +339,7 @@
 
     .checks-toggle {
       cursor: pointer;
-      color: #0969da;
+      color: var(--accent);
       padding: 0.25rem 0;
     }
 
@@ -357,7 +355,7 @@
 
     .check-item {
       padding: 0.375rem 0;
-      border-top: 1px solid #ddd;
+      border-top: 1px solid var(--border);
       display: flex;
       align-items: center;
       gap: 0.5rem;
@@ -370,7 +368,7 @@
 
     .check-name {
       flex: 1;
-      color: #0969da;
+      color: var(--accent);
       text-decoration: none;
       overflow: hidden;
       text-overflow: ellipsis;
@@ -382,14 +380,24 @@
     }
 
     /* Conversation content */
+    /* The description is a card like everything else: header strip, inset body. The
+       body needs its own horizontal inset because .markdown-body brings a white
+       background of its own from the vendored GitHub stylesheet — without it the text
+       sits flush against that white edge. */
     .pr-description {
       margin-bottom: 1rem;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-card);
+      overflow: hidden;
     }
 
     .pr-description summary {
       cursor: pointer;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #ddd;
+      padding: var(--space-2) var(--space-3);
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
       font-weight: 600;
     }
 
@@ -400,10 +408,14 @@
     }
 
     .pr-description .markdown-body {
-      padding: 0.75rem 0;
+      padding: var(--space-3);
       word-wrap: break-word;
       overflow-wrap: break-word;
     }
+
+    /* A collapsed <details> would otherwise keep the header's bottom rule with nothing
+       under it. */
+    .pr-description:not([open]) summary { border-bottom: none; }
 
     .pr-conversation {
       margin-bottom: 1rem;
@@ -412,7 +424,7 @@
     .pr-conversation summary {
       cursor: pointer;
       padding: 0.5rem 0;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--border);
       font-weight: 600;
       list-style: none;
       user-select: none;
@@ -433,7 +445,7 @@
       display: inline-block;
       width: 0;
       height: 0;
-      border-left: 5px solid #666;
+      border-left: 5px solid var(--fg-muted);
       border-top: 4px solid transparent;
       border-bottom: 4px solid transparent;
       margin-right: 0.5rem;
@@ -450,7 +462,7 @@
     }
 
     .comment, .review {
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border-subtle);
       padding: 0.5rem 0;
     }
 
@@ -461,12 +473,12 @@
     .comment-header, .review-header {
       margin-bottom: 0.25rem;
       font-size: 0.85rem;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     .comment-author {
       font-weight: 600;
-      color: #222;
+      color: var(--fg);
       margin-right: 0.5rem;
     }
 
@@ -476,13 +488,15 @@
       margin-right: 0.5rem;
     }
 
-    .review-approved .review-state { color: #2da44e; }
-    .review-changes_requested .review-state { color: #cf222e; }
-    .review-commented .review-state { color: #666; }
+    .review-approved .review-state { color: var(--success-emphasis); }
+    .review-changes_requested .review-state { color: var(--danger); }
+    .review-commented .review-state { color: var(--fg-muted); }
 
     .pr-comment-form, .pr-review-form {
-      border: 1px solid #ddd;
-      padding: 0.75rem;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--card);
+      padding: var(--space-3);
       margin-bottom: 1rem;
     }
 
@@ -526,7 +540,7 @@
     .comment-textarea {
       width: 100%;
       padding: 0.5rem;
-      border: 1px solid #ddd;
+      border: 1px solid var(--border);
       font-family: inherit;
       font-size: 0.9rem;
       resize: vertical;
@@ -545,7 +559,7 @@
       font-size: 1.1rem;
       margin: 0 0 1rem;
       padding-bottom: 0.75rem;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--border);
     }
 
     /* Commits content */
@@ -556,7 +570,7 @@
     }
 
     .commit-item {
-      border-bottom: 1px solid #eee;
+      border-bottom: 1px solid var(--border-subtle);
       padding: 0.5rem 0;
     }
 
@@ -573,14 +587,14 @@
 
     .commit-message {
       font-weight: normal;
-      color: #222;
+      color: var(--fg);
       margin: 0;
       font-size: 0.9rem;
     }
 
     .commit-sha {
       font-family: monospace;
-      color: #0969da;
+      color: var(--accent);
       font-size: 0.85rem;
       text-decoration: none;
     }
@@ -591,18 +605,18 @@
 
     .commit-author {
       font-size: 0.85rem;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     /* Vim navigation highlight */
     .vim-selected {
-      background: #fff3cd !important;
-      border-left: 3px solid #856404 !important;
+      background: var(--warning-surface) !important;
+      border-left: 3px solid var(--warning) !important;
       padding-left: 0.5rem !important;
     }
 
     .diff-file.vim-selected {
-      border: 2px solid #856404 !important;
+      border: 2px solid var(--warning) !important;
     }
 
     /* Collapsible comments */
@@ -634,7 +648,7 @@
     }
 
     .comment-body {
-      padding: 0.5rem 0 0.5rem 1rem;
+      padding: var(--space-2) 0;
       word-wrap: break-word;
       overflow-wrap: break-word;
       max-width: 100%;
@@ -659,8 +673,10 @@
 
     /* Diff hunk in conversation */
     .diff-hunk-simple {
-      background: #f6f8fa;
-      border: 1px solid #ddd;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: var(--space-2);
     }
 
     .diff-hunk-simple .diff-table {
@@ -684,7 +700,7 @@
       gap: 0.5rem;
       margin: 0.5rem 0;
       padding-bottom: 0.5rem;
-      border-bottom: 1px solid #ddd;
+      border-bottom: 1px solid var(--border);
     }
 
     .conversation-controls button {
@@ -707,7 +723,7 @@
 
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/" class="nav-logo">Argus</a>
+      <a href="/" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <a href="/repos/<%= owner %>/<%= repo %>/pulls"><%= owner %>/<%= repo %></a>
       <% if (user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
@@ -723,6 +739,7 @@
   <div id="updates-banner" class="updates-banner hidden">
     <span>Updates available. </span>
     <a href="" id="reload-link">Reload to review latest</a>
+    <span class="banner-hint">or press <kbd>c</kbd></span>
     <button type="button" id="dismiss-banner" class="dismiss-btn">Dismiss</button>
   </div>
 
@@ -733,34 +750,34 @@
     <!-- Left Sidebar: Review Progress -->
     <aside class="pr-left-sidebar" id="pr-left-sidebar">
       <% if (!isHistoricalView && !isCrossRevisionView) { %>
-      <div id="review-progress-panel" style="background: #f0f4f9; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <div style="font-weight: 600; font-size: 0.85rem; color: #1f2328; margin-bottom: 0.5rem;">Review Progress</div>
-        <div style="font-weight: 700; font-size: 1.5rem; color: #0969da; margin-bottom: 0.5rem;" id="review-progress-percent"><%= totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0 %>%</div>
-        <div style="background: #d0d7de; border-radius: 3px; height: 6px; margin-bottom: 0.75rem; overflow: hidden;">
-          <div id="review-progress-bar" style="background: #0969da; height: 100%; border-radius: 3px; transition: width 0.3s ease; width: <%= totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0 %>%;"></div>
+      <div id="review-progress-panel" style="background: var(--accent-surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div style="font-weight: 600; font-size: 0.85rem; color: var(--fg); margin-bottom: 0.5rem;">Review Progress</div>
+        <div style="font-weight: 700; font-size: 1.5rem; color: var(--accent); margin-bottom: 0.5rem;" id="review-progress-percent"><%= totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0 %>%</div>
+        <div style="background: var(--border); border-radius: 3px; height: 6px; margin-bottom: 0.75rem; overflow: hidden;">
+          <div id="review-progress-bar" style="background: var(--accent); height: 100%; border-radius: 3px; transition: width 0.3s ease; width: <%= totalLines > 0 ? Math.round(reviewedLines / totalLines * 100) : 0 %>%;"></div>
         </div>
-        <div style="font-size: 0.8rem; color: #656d76; line-height: 1.6;">
+        <div style="font-size: 0.8rem; color: var(--fg-muted); line-height: 1.6;">
           <div><span id="review-progress-commits"><%= reviewedCommits.length %></span> / <%= commits.length %> commits</div>
           <div><span id="review-progress-files"><%= reviewedFiles.length %></span> / <%= files.length %> files</div>
           <div><span id="review-progress-lines"><%= reviewedLines %></span> / <%= totalLines %> lines</div>
         </div>
       </div>
       <% } %>
-      <div style="margin-top: 1rem; background: #f0f4f9; border: 1px solid #d0d7de; border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
-        <div style="font-weight: 600; font-size: 0.85rem; color: #1f2328; margin-bottom: 0.5rem;">Options</div>
-        <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: #656d76; cursor: pointer;">
+      <div style="margin-top: 1rem; background: var(--accent-surface); border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+        <div style="font-weight: 600; font-size: 0.85rem; color: var(--fg); margin-bottom: 0.5rem;">Options</div>
+        <label style="display: flex; align-items: center; gap: 0.5rem; font-size: 0.8rem; color: var(--fg-muted); cursor: pointer;">
           <input type="checkbox" id="whitespace-toggle" <%= hideWhitespace ? 'checked' : '' %>>
           Hide whitespace
         </label>
       </div>
       <div class="keyboard-help" style="margin-top: 1rem;">
-        <h3 style="font-size: 0.8rem; color: #666; text-transform: uppercase;">Keyboard shortcuts</h3>
+        <h3 style="font-size: 0.8rem; color: var(--fg-muted); text-transform: uppercase;">Keyboard shortcuts</h3>
         <div class="keyboard-shortcuts">
           <div class="keyboard-shortcut"><kbd>g</kbd> <span>Go to commit or file</span></div>
           <div class="keyboard-shortcut"><kbd>n</kbd> <span>Next unreviewed item</span></div>
           <div class="keyboard-shortcut"><kbd>p</kbd> <span>Previous unreviewed item</span></div>
           <div class="keyboard-shortcut"><kbd>r</kbd> <span>Toggle reviewed</span></div>
-          <div class="keyboard-shortcut"><kbd>c</kbd> <span>Check for updates</span></div>
+          <div class="keyboard-shortcut"><kbd>c</kbd> <span>Check for updates, then reload</span></div>
         </div>
       </div>
     </aside>
@@ -787,7 +804,7 @@
                rel="noopener"
                class="github-pr-link"
                title="View on GitHub"
-               style="display: inline-flex; align-items: center; margin-left: 0.25rem; color: #666; text-decoration: none; vertical-align: middle;">
+               style="display: inline-flex; align-items: center; margin-left: 0.25rem; color: var(--fg-muted); text-decoration: none; vertical-align: middle;">
               <svg width="10" height="10" viewBox="0 0 16 16" fill="currentColor" style="display: block;">
                 <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"></path>
               </svg>
@@ -796,7 +813,14 @@
         </h1>
 
         <div class="pr-meta">
-          <span class="pr-state pr-state-<%= pr.state %>"><%= pr.state %></span>
+          <%
+            // GitHub's REST API only has open/closed, so a merged PR reports "closed" —
+            // technically true and useless to read, since merged and abandoned are the
+            // two outcomes you most need to tell apart. `merged_at` is the durable
+            // signal; `merged` is only present on the single-PR payload.
+            const displayState = (pr.merged || pr.merged_at) ? 'merged' : pr.state;
+          %>
+          <span class="pr-state pr-state-<%= displayState %>"><%= displayState %></span>
           <% if (pr.draft) { %>
             <span class="badge-draft">Draft</span>
           <% } %>
@@ -826,7 +850,7 @@
         <button class="pr-tab <%= activeTab === 'checks' ? 'active' : '' %>" data-tab="checks">
           Checks
           <% if (checksSummary.total > 0) { %>
-            <span style="background: <%= checksSummary.state === 'success' ? '#2da44e' : checksSummary.state === 'failure' ? '#cf222e' : '#856404' %>; color: white; padding: 0.125rem 0.5rem; border-radius: 10px; margin-left: 0.25rem;"><%= checksSummary.total %></span>
+            <span style="background: <%= checksSummary.state === 'success' ? 'var(--success-emphasis)' : checksSummary.state === 'failure' ? 'var(--danger)' : 'var(--warning)' %>; color: white; padding: 0.125rem 0.5rem; border-radius: 10px; margin-left: 0.25rem;"><%= checksSummary.total %></span>
           <% } %>
         </button>
         <button class="pr-tab <%= activeTab === 'review' ? 'active' : '' %>" data-tab="review">Review
@@ -922,7 +946,7 @@
                       const reviewTextMap = { APPROVED: 'approved', CHANGES_REQUESTED: 'requested changes', COMMENTED: 'commented' };
                       const reviewText = reviewTextMap[item.data.state] || 'reviewed';
                     %>
-                    <div style="padding: 0.5rem 0; color: #666; font-size: 0.9rem;">
+                    <div style="padding: 0.5rem 0; color: var(--fg-muted); font-size: 0.9rem;">
                       <strong><%= item.data.user.login %></strong>
                       <%= reviewText %>
                       · <%= new Date(item.data.submitted_at).toLocaleString() %>
@@ -933,13 +957,13 @@
                   <details class="comment review-comment" open>
                     <summary class="comment-header">
                       <span class="comment-author"><%= item.data.user.login %></span>
-                      <span style="color: #666; margin: 0 0.5rem;">commented on</span>
-                      <code style="background: #f6f8fa; padding: 0.125rem 0.375rem; border-radius: 3px; font-size: 0.85rem; word-break: break-all;"><%= item.data.path %></code>
+                      <span style="color: var(--fg-muted); margin: 0 0.5rem;">commented on</span>
+                      <code style="background: var(--surface); padding: 0.125rem 0.375rem; border-radius: 3px; font-size: 0.85rem; word-break: break-all;"><%= item.data.path %></code>
                       <% if (item.data.line) { %>
-                        <span style="color: #666; margin-left: 0.25rem;">line <%= item.data.line %></span>
+                        <span style="color: var(--fg-muted); margin-left: 0.25rem;">line <%= item.data.line %></span>
                       <% } %>
                       <% if (item.data.original_commit_id && item.data.commit_id && item.data.original_commit_id !== item.data.commit_id) { %>
-                        <span style="background: #f6f8fa; color: #666; padding: 0.125rem 0.5rem; border-radius: 3px; font-size: 0.8rem; margin-left: 0.5rem; border: 1px solid #ddd;">Outdated</span>
+                        <span style="background: var(--surface); color: var(--fg-muted); padding: 0.125rem 0.5rem; border-radius: 3px; font-size: 0.8rem; margin-left: 0.5rem; border: 1px solid var(--border);">Outdated</span>
                       <% } %>
                       <time class="comment-time" datetime="<%= item.data.created_at %>" style="margin-left: 0.5rem;">
                         <%= new Date(item.data.created_at).toLocaleString() %>
@@ -984,7 +1008,7 @@
                     const eventText = (eventTextMap[event.event] || (() => event.event))();
                     const actorName = event.actor?.login || 'Someone';
                   %>
-                  <div style="padding: 0.5rem 0; color: #666; font-size: 0.9rem;">
+                  <div style="padding: 0.5rem 0; color: var(--fg-muted); font-size: 0.9rem;">
                     <strong><%= actorName %></strong>
                     <%= eventText %>
                     · <%= new Date(event.created_at).toLocaleString() %>
@@ -1015,33 +1039,64 @@
       <div class="pr-tab-content <%= activeTab === 'checks' ? 'active' : '' %>" data-tab-content="checks">
         <div style="padding: 1rem 0;">
           <% if (checksSummary.total === 0) { %>
-            <div style="text-align: center; padding: 3rem 1rem; color: #666;">
+            <div style="text-align: center; padding: 3rem 1rem; color: var(--fg-muted);">
               <div style="font-size: 3rem; margin-bottom: 1rem;">✓</div>
               <h2 style="font-size: 1.1rem; margin-bottom: 0.5rem; font-weight: 600;">No checks configured</h2>
-              <p style="font-size: 0.9rem; color: #888;">This pull request doesn't have any checks configured.</p>
+              <p style="font-size: 0.9rem; color: var(--fg-subtle);">This pull request doesn't have any checks configured.</p>
             </div>
           <% } else { %>
             <!-- Checks Summary Header -->
-            <div style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid #ddd;">
+            <div style="margin-bottom: 1.5rem; padding-bottom: 1rem; border-bottom: 1px solid var(--border);">
               <h2 style="font-size: 1.1rem; margin: 0 0 0.75rem; font-weight: 600;">
                 <% if (checksSummary.state === 'success') { %>
-                  <span style="color: #1a7f37;">✓</span> All checks have passed
+                  <span style="color: var(--success);">✓</span> All checks have passed
                 <% } else if (checksSummary.state === 'failure') { %>
-                  <span style="color: #cf222e;">✗</span> Some checks were not successful
+                  <span style="color: var(--danger);">✗</span> Some checks were not successful
                 <% } else { %>
-                  <span style="color: #856404;">◯</span> Some checks are in progress
+                  <span style="color: var(--warning);">◯</span> Some checks are in progress
                 <% } %>
               </h2>
-              <div style="font-size: 0.9rem; color: #666;">
-                <span style="<%= checksSummary.passed > 0 ? 'color: #1a7f37; font-weight: 600;' : '' %>"><%= checksSummary.passed %> successful</span>
+              <div style="font-size: 0.9rem; color: var(--fg-muted);">
+                <span style="<%= checksSummary.passed > 0 ? 'color: var(--success); font-weight: 600;' : '' %>"><%= checksSummary.passed %> successful</span>
                 <% if (checksSummary.failed > 0) { %>
-                  <span style="color: #cf222e; font-weight: 600; margin-left: 0.5rem;"><%= checksSummary.failed %> failing</span>
+                  <span style="color: var(--danger); font-weight: 600; margin-left: 0.5rem;"><%= checksSummary.failed %> failing</span>
                 <% } %>
                 <% if (checksSummary.pending > 0) { %>
-                  <span style="color: #856404; font-weight: 600; margin-left: 0.5rem;"><%= checksSummary.pending %> pending</span>
+                  <span style="color: var(--warning); font-weight: 600; margin-left: 0.5rem;"><%= checksSummary.pending %> pending</span>
                 <% } %>
               </div>
             </div>
+
+            <% if (pendingWorkflows && pendingWorkflows.length > 0) { %>
+              <div class="workflow-approval">
+                <div class="workflow-approval-text">
+                  <strong><%= pendingWorkflows.length %> workflow<%= pendingWorkflows.length === 1 ? '' : 's' %> waiting for your approval</strong>
+                  <div class="workflow-approval-names">
+                    <%= pendingWorkflows.map(w => w.name).join(', ') %>
+                  </div>
+                  <div class="workflow-approval-why">
+                    This PR comes from a fork, so GitHub will not run its workflows until you
+                    approve them. Until they run, a required check reports nothing and the
+                    merge stays blocked. Approving runs the contributor's code on your runners.
+                  </div>
+                </div>
+                <form method="POST" action="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/approve-workflows">
+                  <input type="hidden" name="run_ids" value="<%= pendingWorkflows.map(w => w.id).join(',') %>">
+                  <button type="submit" class="btn btn-success">Approve and run</button>
+                </form>
+              </div>
+            <% } %>
+
+            <% if (mergeStatus.blocked && checksSummary.failed === 0) { %>
+              <%# Every reported check can pass while GitHub still refuses the merge. The
+                  reasons never appear in this list, because a check that was never allowed
+                  to run reports nothing at all. %>
+              <div class="merge-blocked-note">
+                <strong><%= mergeStatus.label %>.</strong>
+                <%= mergeStatus.detail %>
+                Only checks that have reported are listed here.
+              </div>
+            <% } %>
 
             <!-- Checks List -->
             <div class="checks-list-container">
@@ -1070,39 +1125,39 @@
                   ];
                 %>
                 <% allChecks.forEach(item => { %>
-                  <div class="check-item-detailed" style="border: 1px solid #ddd; border-radius: 6px; margin-bottom: 0.75rem; padding: 1rem;">
+                  <div class="check-item-detailed" style="border: 1px solid var(--border); border-radius: 6px; margin-bottom: 0.75rem; padding: 1rem;">
                     <div style="display: flex; align-items: flex-start; gap: 0.75rem;">
                       <!-- Status Icon -->
                       <div style="min-width: 1.5rem; text-align: center; font-size: 1.25rem; margin-top: 0.125rem;">
                         <% if (item.status !== 'completed') { %>
-                          <span style="color: #856404;">◯</span>
+                          <span style="color: var(--warning);">◯</span>
                         <% } else if (item.conclusion === 'success' || item.conclusion === 'skipped') { %>
-                          <span style="color: #1a7f37;">✓</span>
+                          <span style="color: var(--success);">✓</span>
                         <% } else { %>
-                          <span style="color: #cf222e;">✗</span>
+                          <span style="color: var(--danger);">✗</span>
                         <% } %>
                       </div>
 
                       <!-- Check Details -->
                       <div style="flex: 1; min-width: 0;">
                         <div style="display: flex; align-items: baseline; margin-bottom: 0.25rem;">
-                          <h3 style="margin: 0; font-size: 0.95rem; font-weight: 600; color: #222;">
+                          <h3 style="margin: 0; font-size: 0.95rem; font-weight: 600; color: var(--fg);">
                             <%= item.name %>
                           </h3>
                         </div>
 
-                        <div style="font-size: 0.85rem; color: #666; margin-bottom: 0.5rem;">
+                        <div style="font-size: 0.85rem; color: var(--fg-muted); margin-bottom: 0.5rem;">
                           <% if (item.status !== 'completed') { %>
-                            <span style="color: #856404;">In progress...</span>
+                            <span style="color: var(--warning);">In progress...</span>
                           <% } else if (item.conclusion === 'success') { %>
-                            <span style="color: #1a7f37;">Successful</span>
+                            <span style="color: var(--success);">Successful</span>
                             <% if (item.completed_at) { %>
                               · <%= new Date(item.completed_at).toLocaleString() %>
                             <% } %>
                           <% } else if (item.conclusion === 'skipped') { %>
-                            <span style="color: #666;">Skipped</span>
+                            <span style="color: var(--fg-muted);">Skipped</span>
                           <% } else if (item.conclusion === 'failure' || item.conclusion === 'error') { %>
-                            <span style="color: #cf222e;">Failed</span>
+                            <span style="color: var(--danger);">Failed</span>
                             <% if (item.completed_at) { %>
                               · <%= new Date(item.completed_at).toLocaleString() %>
                             <% } %>
@@ -1115,7 +1170,7 @@
                           <a href="<%= item.url %>"
                              target="_blank"
                              rel="noopener"
-                             style="font-size: 0.85rem; color: #0969da; text-decoration: none; display: inline-flex; align-items: center; gap: 0.25rem;">
+                             style="font-size: 0.85rem; color: var(--accent); text-decoration: none; display: inline-flex; align-items: center; gap: 0.25rem;">
                             Details
                             <svg width="12" height="12" viewBox="0 0 16 16" fill="currentColor">
                               <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"></path>
@@ -1280,7 +1335,7 @@
             <% } %>
           </header>
           <% if (isCrossRevisionView) { %>
-            <div style="background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: #0550ae;">
+            <div style="background: var(--accent-surface); border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--accent-strong);">
               Comparing revision changes only. Comments and review status are not shown.
             </div>
           <% } else if (isHistoricalView) { %>
@@ -1289,7 +1344,7 @@
             </div>
           <% } %>
           <% if (typeof lazyDiffs !== 'undefined' && lazyDiffs) { %>
-            <div class="lazy-diffs-notice" style="background: #ddf4ff; border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: #0550ae;">
+            <div class="lazy-diffs-notice" style="background: var(--accent-surface); border: 1px solid #54aeff; border-radius: 6px; padding: 0.5rem 0.75rem; margin-bottom: 0.75rem; font-size: 0.85rem; color: var(--accent-strong);">
               Large diff — files load when expanded to keep the page responsive. Use <strong>Expand all diffs</strong> to load everything (e.g. for browser find-in-page).
             </div>
           <% } %>
@@ -1351,7 +1406,7 @@
             <%= new Date(fetchedAt).toLocaleTimeString() %>
           </time>
         </div>
-        <div class="workflow-item" style="color: #888; font-size: 0.75rem; margin-top: 0.25rem;">
+        <div class="workflow-item" style="color: var(--fg-subtle); font-size: 0.75rem; margin-top: 0.25rem;">
           <span id="poll-interval-text">Auto-checks every <%= Math.floor(pollIntervalMs / 1000) %>s</span>
         </div>
         <button type="button" id="check-updates-btn" class="btn btn-small btn-secondary">
@@ -1369,17 +1424,33 @@
                 ⚠ This PR has conflicts that must be resolved
               </div>
             <% } else if (pr.mergeable === null) { %>
-              <div style="color: #666; font-size: 0.85rem; margin-bottom: 0.5rem;">
+              <div style="color: var(--fg-muted); font-size: 0.85rem; margin-bottom: 0.5rem;">
                 Checking if PR is mergeable...
               </div>
             <% } %>
           </div>
+          <% if (pendingWorkflows && pendingWorkflows.length > 0) { %>
+            <form method="POST" action="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/approve-workflows" style="margin-bottom: var(--space-2);">
+              <input type="hidden" name="run_ids" value="<%= pendingWorkflows.map(w => w.id).join(',') %>">
+              <button type="submit" class="btn" style="width: 100%;">
+                Approve <%= pendingWorkflows.length %> waiting workflow<%= pendingWorkflows.length === 1 ? '' : 's' %>
+              </button>
+            </form>
+          <% } %>
           <form method="POST" action="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>/merge" id="merge-form">
-            <select name="merge_method" style="width: 100%; margin-bottom: 0.5rem; padding: 0.375rem; border: 1px solid #d1d5da; border-radius: 6px;">
+            <select name="merge_method" style="width: 100%; margin-bottom: 0.5rem; padding: 0.375rem; border: 1px solid var(--border); border-radius: 6px;">
               <option value="merge">Create a merge commit</option>
               <option value="squash">Squash and merge</option>
               <option value="rebase">Rebase and merge</option>
             </select>
+            <div class="merge-readiness merge-readiness-<%= mergeStatus.state %>">
+              <span class="merge-readiness-label"><%= mergeStatus.label %></span>
+              <% if (mergeStatus.detail) { %>
+                <span class="merge-readiness-detail"><%= mergeStatus.detail %></span>
+              <% } %>
+            </div>
+            <%# Still clickable when blocked: an admin may be allowed to merge anyway, and
+                GitHub is the authority on that, not this page. %>
             <button type="submit" class="btn btn-success" style="width: 100%;" <%= pr.mergeable === false ? 'disabled' : '' %>>
               Merge pull request
             </button>
@@ -1388,8 +1459,8 @@
       <% } else { %>
         <div class="sidebar-section">
           <h3>Status</h3>
-          <div style="padding: 0.5rem; background: <%= pr.state === 'closed' ? '#f1f8ff' : '#f6f8fa' %>; border-radius: 6px; text-align: center; font-weight: 600; color: <%= pr.merged ? '#6f42c1' : '#586069' %>;">
-            <%= pr.merged ? '✓ Merged' : 'Closed' %>
+          <div style="padding: 0.5rem; background: var(--surface); border-radius: var(--radius); text-align: center; font-weight: 600; color: <%= (pr.merged || pr.merged_at) ? 'var(--merged)' : 'var(--danger)' %>;">
+            <%= (pr.merged || pr.merged_at) ? '✓ Merged' : 'Closed' %>
           </div>
         </div>
       <% } %>

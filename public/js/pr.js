@@ -28,6 +28,12 @@
     if (overlay) overlay.classList.remove('active');
   }
 
+  // Whether every review item was already ticked when the page loaded. Declared up here
+  // with the rest of the module state because init() seeds it long before the functions
+  // that use it appear in the file, and a `let` cannot be read before its declaration
+  // runs — doing that threw and took the remainder of init() with it.
+  let reviewWasComplete = null;
+
   // DOM Elements
   const updatesBanner = document.getElementById('updates-banner');
   const reloadLink = document.getElementById('reload-link');
@@ -308,6 +314,7 @@
     setupFullFileToggle();
     setupRenderedToggle();
     setupLoadingOverlayForNavigations();
+    seedReviewCompletion();
 
     // Set initial state of all "Review all" directory checkboxes
     document.querySelectorAll('.dir-review-all-toggle').forEach(checkbox => {
@@ -818,6 +825,39 @@
     return reviewProgressTotals;
   }
 
+  // Finishing the last item is exactly the moment you want to approve, and the review form
+  // was otherwise a mouse trip away. Opens on the *transition* to complete only: a PR that
+  // is already fully reviewed when you open it must not pop the form in your face, and
+  // neither should unchecking and re-checking one file open it twice.
+  function reviewCompletionState() {
+    const commitTotal = document.querySelectorAll('.commit-reviewed-toggle').length;
+    const commitReviewed = document.querySelectorAll('.commit-reviewed-toggle:checked').length;
+    const fileTotal = document.querySelectorAll('.file-reviewed-toggle').length;
+    const fileReviewed = document.querySelectorAll('.file-reviewed-toggle:checked').length;
+    const total = commitTotal + fileTotal;
+    return total > 0 && commitReviewed + fileReviewed === total;
+  }
+
+  // Records the state the page loaded in, so the first real change is measured against it.
+  function seedReviewCompletion() {
+    reviewWasComplete = reviewCompletionState();
+  }
+
+  function maybeOpenReviewForm() {
+    const complete = reviewCompletionState();
+    const was = reviewWasComplete;
+    reviewWasComplete = complete;
+
+    if (!complete || was !== false) return;
+    // Historical and cross-revision views have no progress panel and nothing to approve.
+    if (!document.getElementById('review-progress-panel')) return;
+
+    const form = document.getElementById('review-form');
+    const toggle = document.getElementById('review-toggle-btn');
+    if (!form || !toggle || form.classList.contains('active')) return;
+    toggle.click();
+  }
+
   function updateReviewProgress() {
     // The section counters live in the Review tab and update even when the sidebar progress
     // panel is absent (historical views), so they're refreshed before the early return.
@@ -857,6 +897,8 @@
     if (linesEl) linesEl.textContent = reviewedLines;
     if (percentEl) percentEl.textContent = `${percent}%`;
     if (barEl) barEl.style.width = `${percent}%`;
+
+    maybeOpenReviewForm();
   }
 
   // Run async tasks with a bounded number in flight at once.
@@ -1531,6 +1573,17 @@
       if (shortcutBlocked(e)) return;
 
       e.preventDefault();
+
+      // Once the banner is up the answer is already on screen, so a second press acts on
+      // it rather than asking again — otherwise the only way to take the update is the
+      // mouse. Dismissing the banner hands `c` back to checking.
+      const updatesPending = updatesBanner && !updatesBanner.classList.contains('hidden');
+      if (updatesPending) {
+        if (reloadLink) reloadLink.click();
+        else window.location.reload();
+        return;
+      }
+
       checkForUpdates();
     });
   }

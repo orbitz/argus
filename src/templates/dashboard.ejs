@@ -4,110 +4,90 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
-    .dashboard { max-width: 900px; margin: 0 auto; padding: 1rem; }
-    .dashboard-header { margin-bottom: 1.5rem; display: flex; justify-content: space-between; align-items: center; }
-    .dashboard-header h1 { margin: 0; }
-    .dashboard-stats { color: #666; }
+    .dashboard { max-width: 1000px; margin: 0 auto; padding: 1rem; }
 
-    .repo-section { margin-bottom: 1.5rem; }
-    .repo-header {
-      font-weight: 600;
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #ddd;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
+    .dashboard-header {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 1rem; margin: 1.25rem 0 0.5rem;
     }
-    .repo-name { color: #0066cc; text-decoration: none; }
-    .repo-name:hover { text-decoration: underline; }
-    .pr-count { color: #666; font-weight: normal; font-size: 0.9rem; }
+    .dashboard-header h1 { margin: 0; font-size: 1.35rem; }
 
-    .pr-list { margin: 0; padding: 0; list-style: none; }
-    .pr-item {
-      padding: 0.5rem 0;
-      border-bottom: 1px solid #eee;
-      display: flex;
-      gap: 0.75rem;
-      align-items: baseline;
+    .section { margin-bottom: 2rem; }
+    .section-header {
+      display: flex; align-items: baseline; gap: 0.5rem;
+      padding-bottom: 0.35rem; border-bottom: 2px solid var(--border); margin-bottom: 0.25rem;
     }
-    .pr-item:last-child { border-bottom: none; }
-
-    .pr-number { color: #666; font-size: 0.9rem; min-width: 4em; }
-    .pr-link { flex: 1; }
-    .pr-title { color: #222; text-decoration: none; }
-    .pr-title:hover { color: #0066cc; text-decoration: underline; }
-    .pr-draft { color: #886600; font-size: 0.8rem; }
-    .pr-meta { color: #888; font-size: 0.85rem; white-space: nowrap; }
-
-    .pr-approved {
-      color: #1a7f37;
-      font-size: 0.8rem;
-      font-weight: 600;
-      white-space: nowrap;
+    .section-title { font-size: 1.05rem; font-weight: 600; margin: 0; }
+    .section-count {
+      font-size: 0.8rem; color: var(--fg-muted); background: #eef1f4;
+      border-radius: 999px; padding: 0.05rem 0.5rem;
     }
-    /* Others' approvals: distinct from your own (lighter, outlined, not bold). */
-    .pr-approved-others {
-      color: #57606a;
-      font-size: 0.8rem;
-      white-space: nowrap;
-      padding: 0.1rem 0.4rem;
-      border: 1px solid #cdd5dd;
-      border-radius: 999px;
+    .section-note { color: var(--fg-muted); font-size: 0.85rem; margin-left: auto; }
+
+    .group-title {
+      font-size: 0.8rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.03em; color: var(--fg-muted); margin: 0.9rem 0 0.15rem;
+      display: flex; align-items: baseline; gap: 0.4rem;
     }
-    .pr-review-progress {
-      color: #666;
-      font-size: 0.8rem;
-      white-space: nowrap;
-      padding: 0.1rem 0.4rem;
-      border: 1px solid #ddd;
-      border-radius: 999px;
+    .group-title.blocked { color: #a40e26; }
+    .group-title.ready { color: var(--success); }
+
+    .item-list { margin: 0; padding: 0; list-style: none; }
+    .item {
+      display: flex; gap: 0.6rem; align-items: baseline;
+      padding: 0.45rem 0.25rem; border-bottom: 1px solid var(--border-subtle);
     }
-    .pr-review-progress.complete {
-      color: #1a7f37;
-      border-color: #1a7f37;
-      background: #eaf6ec;
+    .item:last-child { border-bottom: none; }
+    .item-number { color: var(--fg-muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
+    .item-main { flex: 1; min-width: 0; }
+    .item-title { color: var(--fg); text-decoration: none; font-weight: 500; }
+    .item-title:hover { color: var(--accent); text-decoration: underline; }
+    .item-sub { display: block; color: var(--fg-muted); font-size: 0.8rem; margin-top: 0.1rem; }
+    .item-repo { color: var(--fg-muted); text-decoration: none; }
+    .item-repo:hover { text-decoration: underline; }
+
+    .badge {
+      font-size: 0.75rem; white-space: nowrap; border-radius: 999px;
+      padding: 0.05rem 0.45rem; border: 1px solid var(--border); color: var(--fg-muted);
     }
+    .badge.draft { color: var(--warning); border-color: var(--warning-border); }
+    .badge.diff { font-variant-numeric: tabular-nums; }
+    .badge.add { color: var(--success); border: none; padding-right: 0; }
+    .badge.del { color: #a40e26; border: none; padding-left: 0.15rem; }
+    .badge.progress { color: var(--accent); border-color: #b6d4f7; }
+    /* Why a PR is waiting on you: named directly, or through a team. */
+    .badge.asked-you { color: var(--accent-strong); border-color: #b6d4f7; background: var(--accent-subtle); font-weight: 600; }
+    .badge.asked-team { color: var(--fg-muted); border-color: var(--border); }
+    .badge.progress.complete { color: var(--success); border-color: #b7e0c2; }
 
-    .empty-state { color: #666; text-align: center; padding: 3rem; }
-    .nav-links { display: flex; gap: 1rem; }
+    .empty-state { color: var(--fg-muted); font-style: italic; padding: 0.6rem 0.25rem; margin: 0; }
 
-    .search-box { margin-bottom: 1.5rem; display: flex; gap: 0.5rem; }
-    .search-input { flex: 1; padding: 0.5rem 0.75rem; font-size: 1rem; }
-    .search-go { padding: 0.5rem 1rem; font-size: 1rem; cursor: pointer; background: #0066cc; color: #fff; border: none; border-radius: 4px; }
-    .search-go:disabled { opacity: 0.4; cursor: default; }
-    .repo-section.hidden, .pr-item.hidden { display: none; }
-
-    .dashboard-controls { display: flex; align-items: center; gap: 1rem; }
-    .show-mine-toggle { color: #666; font-size: 0.85rem; display: flex; align-items: center; gap: 0.3rem; cursor: pointer; white-space: nowrap; }
-    .approval-filter select { font-size: 0.85rem; padding: 0.2rem 0.4rem; border: 1px solid #ddd; border-radius: 4px; background: #fff; cursor: pointer; }
-    /* Hide the current user's own PRs by default; revealed when the toggle is on. */
-    .dashboard:not(.show-mine) .pr-item.pr-own { display: none; }
-
-    /* Responsive */
-    @media (max-width: 768px) {
-      .dashboard { padding: 0.75rem; }
-      .dashboard-header { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-      .pr-item { flex-wrap: wrap; gap: 0.5rem; }
-      .pr-number { min-width: auto; }
+    .bots { margin-top: 0.6rem; }
+    .bots summary {
+      cursor: pointer; color: var(--fg-muted); font-size: 0.85rem;
+      padding: 0.3rem 0; list-style-position: inside;
     }
+    .bots summary:hover { color: var(--accent); }
 
-    @media (max-width: 480px) {
+    .more-link { display: inline-block; font-size: 0.8rem; color: var(--accent); text-decoration: none; padding: 0.35rem 0.25rem; }
+    .more-link:hover { text-decoration: underline; }
+
+    .hidden { display: none !important; }
+
+    @media (max-width: 600px) {
       .dashboard { padding: 0.5rem; }
-      .dashboard-header h1 { font-size: 1.25rem; }
-      .repo-header { flex-direction: column; align-items: flex-start; gap: 0.25rem; }
-      .pr-item { gap: 0.375rem; }
-      .pr-title { font-size: 0.9rem; }
-      .pr-meta { font-size: 0.8rem; }
-      .search-input { padding: 0.5rem; font-size: 0.9rem; }
+      .item { flex-wrap: wrap; gap: 0.4rem; }
+      .section-note { margin-left: 0; width: 100%; }
     }
   </style>
 </head>
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/dashboard" class="nav-logo">Argus</a>
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <div class="nav-links">
         <a href="/repos">All Repos</a>
       </div>
@@ -122,80 +102,213 @@
   </header>
 
   <main class="dashboard">
+    <%
+      // Relative age, rendered server-side so the page reads correctly with no JavaScript.
+      function age(iso) {
+        if (!iso) return '';
+        const ms = Date.now() - new Date(iso).getTime();
+        if (!isFinite(ms) || ms < 0) return 'just now';
+        const mins = Math.floor(ms / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return mins + 'm ago';
+        const hours = Math.floor(mins / 60);
+        if (hours < 24) return hours + 'h ago';
+        const days = Math.floor(hours / 24);
+        if (days < 30) return days + 'd ago';
+        const months = Math.floor(days / 30);
+        if (months < 12) return months + 'mo ago';
+        return Math.floor(months / 12) + 'y ago';
+      }
+    %>
+
     <div class="search-box">
-      <input type="text" id="search-input" class="search-input" placeholder="Filter by title, owner/repo#123, or paste a GitHub PR URL" autofocus>
+      <input type="text" id="search-input" class="search-input"
+             placeholder="Filter by title, owner/repo#123, or paste a GitHub PR URL" autofocus>
       <button id="search-go" class="search-go" disabled>Go</button>
     </div>
 
     <div class="dashboard-header">
-      <h1>Open Pull Requests</h1>
-      <div class="dashboard-controls">
-        <label class="show-mine-toggle">
-          <input type="checkbox" id="show-mine"> Show my PRs
-        </label>
-        <label class="approval-filter">
-          <select id="approval-filter">
-            <option value="all">All</option>
-            <option value="approved">Only approved</option>
-            <option value="unapproved">Only unapproved</option>
-          </select>
-        </label>
-        <span class="dashboard-stats"><%= totalPRs %> PRs across <%= reposWithPRs.length %> repos</span>
-        <%- include('partials/freshness') %>
-      </div>
+      <h1>Your work</h1>
+      <%- include('partials/freshness') %>
     </div>
 
-    <% if (reposWithPRs.length === 0) { %>
-      <p class="empty-state">No open pull requests found in your recent repositories.</p>
-    <% } %>
-    <p class="empty-state hidden" id="filtered-empty">No pull requests match the current filters.</p>
+    <div class="pr-tabs">
+      <button class="pr-tab <%= activeTab === 'waiting' ? 'active' : '' %>" data-tab="waiting">
+        Waiting on you
+        <span class="tab-pill" title="Pull requests asking for your review"><%= waiting.total %></span>
+      </button>
+      <button class="pr-tab <%= activeTab === 'mine' ? 'active' : '' %>" data-tab="mine">
+        Your PRs
+        <span class="tab-pill" title="Your open pull requests"><%= mine.total %></span>
+      </button>
+      <button class="pr-tab <%= activeTab === 'mentions' ? 'active' : '' %>" data-tab="mentions">
+        Mentions
+        <span class="tab-pill" title="Open issues and PRs that mention you"><%= mentions.total %></span>
+      </button>
+    </div>
 
-    <% reposWithPRs.forEach(repo => { %>
-      <section class="repo-section">
-        <div class="repo-header">
-          <a href="/repos/<%= repo.owner %>/<%= repo.name %>/pulls" class="repo-name"><%= repo.fullName %></a>
-          <span class="pr-count"><%= repo.pulls.length %> open</span>
+    <%
+      // One row shape for every PR in every section: number, title, where it lives, who
+      // wrote it, how old, how big, and how far through it you are.
+      function renderPull(pr, opts) {
+    %>
+      <li class="item" data-title="<%= pr.title.toLowerCase() %> <%= pr.fullName.toLowerCase() %>">
+        <span class="item-number">#<%= pr.number %></span>
+        <span class="item-main">
+          <a class="item-title" href="/pr/<%= pr.owner %>/<%= pr.repo %>/<%= pr.number %>"><%= pr.title %></a>
+          <% if (pr.draft) { %> <span class="badge draft">draft</span><% } %>
+          <span class="item-sub">
+            <a class="item-repo" href="/repos/<%= pr.owner %>/<%= pr.repo %>/pulls"><%= pr.fullName %></a>
+            <% if (opts && opts.showAuthor) { %> · <%= pr.authorLogin %><% } %>
+            · <%= age(pr.updatedAt) %>
+            <% if (pr.reviewCount > 0) { %> · <%= pr.reviewCount %> review<%= pr.reviewCount === 1 ? '' : 's' %><% } %>
+          </span>
+        </span>
+        <% if (opts && opts.showRequestedFrom) { %>
+          <% if (pr.requestedFromYou) { %>
+            <span class="badge asked-you" title="Your review was requested directly">you</span>
+          <% } %>
+          <% pr.requestedTeams.forEach(team => { %>
+            <span class="badge asked-team" title="Requested from the <%= team %> team, which you are on">@<%= team %></span>
+          <% }) %>
+          <% if (!pr.requestedFromYou && pr.requestedTeams.length === 0) { %>
+            <span class="badge asked-team" title="GitHub did not say which reviewer this request names">review requested</span>
+          <% } %>
+        <% } %>
+        <% if (pr.changedFiles > 0) { %>
+          <span class="badge diff" title="<%= pr.changedFiles %> files changed, +<%= pr.additions %> −<%= pr.deletions %>"><%= pr.changedFiles %>f</span>
+        <% } %>
+        <% if (typeof pr.reviewedFiles === 'number' && pr.changedFiles > 0 && pr.reviewedFiles > 0) {
+             const done = pr.reviewedFiles >= pr.changedFiles; %>
+          <span class="badge progress <%= done ? 'complete' : '' %>"
+                title="You have marked <%= pr.reviewedFiles %> of <%= pr.changedFiles %> files reviewed"><%= pr.reviewedFiles %>/<%= pr.changedFiles %></span>
+        <% } %>
+      </li>
+    <% } %>
+
+    <!-- 1. Blocked on you -->
+    <section class="section pr-tab-content <%= activeTab === 'waiting' ? 'active' : '' %>"
+             data-tab-content="waiting">
+      <% if (waiting.bots.length > 0) { %>
+        <div class="section-header">
+          <span class="section-note"><%= waiting.humans.length %> from people, <%= waiting.bots.length %> from bots</span>
         </div>
-        <ul class="pr-list">
-          <% repo.pulls.forEach(pr => { %>
-            <li class="pr-item<%= user && pr.author === user.login ? ' pr-own' : '' %><%= pr.approved ? ' is-approved' : '' %>">
-              <span class="pr-number">#<%= pr.number %></span>
-              <span class="pr-link">
-                <a href="/pr/<%= repo.owner %>/<%= repo.name %>/<%= pr.number %>" class="pr-title"><%= pr.title %></a>
-                <% if (pr.draft) { %><span class="pr-draft">(draft)</span><% } %>
+      <% } %>
+
+      <% if (waiting.total === 0) { %>
+        <p class="empty-state">Nothing is waiting on you.</p>
+      <% } else { %>
+        <ul class="item-list">
+          <% waiting.humans.forEach(pr => { renderPull(pr, { showAuthor: true, showRequestedFrom: true }); }) %>
+        </ul>
+        <% if (waiting.humans.length === 0) { %>
+          <p class="empty-state">Only bot PRs are waiting on you.</p>
+        <% } %>
+
+        <% if (waiting.bots.length > 0) { %>
+          <details class="bots">
+            <summary><%= waiting.bots.length %> from bots (dependency bumps and the like)</summary>
+            <ul class="item-list">
+              <% waiting.bots.forEach(pr => { renderPull(pr, { showAuthor: true, showRequestedFrom: true }); }) %>
+            </ul>
+          </details>
+        <% } %>
+
+        <%
+          const shown = waiting.humans.length + waiting.bots.length;
+          if (waiting.total > shown) { %>
+          <span class="section-note"><%= waiting.total - shown %> more not shown</span>
+        <% } %>
+      <% } %>
+    </section>
+
+    <!-- 2. Blocked on someone else -->
+    <section class="section pr-tab-content <%= activeTab === 'mine' ? 'active' : '' %>"
+             data-tab-content="mine">
+
+      <% if (mine.total === 0) { %>
+        <p class="empty-state">You have no open pull requests.</p>
+      <% } else { %>
+        <% if (mine.changesRequested.total > 0) { %>
+          <div class="group-title blocked">Changes requested <span class="section-count"><%= mine.changesRequested.total %></span></div>
+          <ul class="item-list">
+            <% mine.changesRequested.items.forEach(pr => { renderPull(pr, {}); }) %>
+          </ul>
+          <% if (mine.changesRequested.total > mine.changesRequested.items.length) { %>
+            <span class="section-note"><%= mine.changesRequested.total - mine.changesRequested.items.length %> more not shown</span>
+          <% } %>
+        <% } %>
+
+        <% if (mine.approved.total > 0) { %>
+          <div class="group-title ready">Approved <span class="section-count"><%= mine.approved.total %></span></div>
+          <ul class="item-list">
+            <% mine.approved.items.forEach(pr => { renderPull(pr, {}); }) %>
+          </ul>
+          <% if (mine.approved.total > mine.approved.items.length) { %>
+            <span class="section-note"><%= mine.approved.total - mine.approved.items.length %> more not shown</span>
+          <% } %>
+        <% } %>
+
+        <% if (mine.awaiting.total > 0) { %>
+          <div class="group-title">Awaiting review <span class="section-count"><%= mine.awaiting.total %></span></div>
+          <ul class="item-list">
+            <% mine.awaiting.items.forEach(pr => { renderPull(pr, {}); }) %>
+          </ul>
+          <% if (mine.awaiting.total > mine.awaiting.items.length) { %>
+            <span class="section-note">
+              Showing the <%= mine.awaiting.items.length %> most recently updated of <%= mine.awaiting.total %>
+            </span>
+          <% } %>
+        <% } %>
+
+        <% if (unbucketedMine > 0) { %>
+          <div class="group-title">Commented on, not yet decided <span class="section-count"><%= unbucketedMine %></span></div>
+          <p class="empty-state">
+            <%= unbucketedMine %> of your PRs have review comments but no approval or change request.
+          </p>
+        <% } %>
+      <% } %>
+    </section>
+
+    <!-- 3. Mentions -->
+    <section class="section pr-tab-content <%= activeTab === 'mentions' ? 'active' : '' %>"
+             data-tab-content="mentions">
+
+      <% if (mentions.total === 0) { %>
+        <p class="empty-state">Nobody has mentioned you in an open issue or PR.</p>
+      <% } else { %>
+        <ul class="item-list">
+          <% mentions.items.forEach(item => { %>
+            <li class="item" data-title="<%= item.title.toLowerCase() %> <%= item.fullName.toLowerCase() %>">
+              <span class="item-number">#<%= item.number %></span>
+              <span class="item-main">
+                <%
+                  // Argus renders PRs; issues stay on GitHub, which the proxy passes
+                  // through untouched since it only claims pull-request paths.
+                  const href = item.isPullRequest
+                    ? `/pr/${item.owner}/${item.repo}/${item.number}`
+                    : `https://github.com/${item.fullName}/issues/${item.number}`;
+                %>
+                <a class="item-title" href="<%= href %>"<%= item.isPullRequest ? '' : ' target="_blank" rel="noopener"' %>><%= item.title %></a>
+                <span class="item-sub">
+                  <%= item.fullName %> · <%= item.isPullRequest ? 'PR' : 'issue' %>
+                  by <%= item.authorLogin %> · <%= age(item.updatedAt) %>
+                </span>
               </span>
-              <% if (pr.approved) { %>
-                <span class="pr-approved" title="You approved this PR">✓ Approved by you</span>
-              <% } %>
-              <% if (pr.otherApprovers && pr.otherApprovers.length > 0) {
-                   const others = pr.otherApprovers;
-                   const label = others.length === 1
-                     ? others[0]
-                     : others[0] + ' +' + (others.length - 1); %>
-                <span class="pr-approved-others" title="Approved by <%= others.join(', ') %>">✓ <%= label %></span>
-              <% } %>
-              <% if (pr.totalFiles > 0) {
-                   const allReviewed = pr.reviewedCount >= pr.totalFiles; %>
-                <span class="pr-review-progress <%= allReviewed ? 'complete' : '' %>"
-                      title="You have reviewed <%= pr.reviewedCount %> of <%= pr.totalFiles %> files"><%= pr.reviewedCount %>/<%= pr.totalFiles %> reviewed</span>
-              <% } %>
-              <span class="pr-meta"><%= pr.author %></span>
             </li>
           <% }) %>
         </ul>
-      </section>
-    <% }) %>
+        <% if (mentions.total > mentions.items.length) { %>
+          <span class="section-note"><%= mentions.total - mentions.items.length %> more not shown</span>
+        <% } %>
+      <% } %>
+    </section>
   </main>
 
   <script>
     const input = document.getElementById('search-input');
     const goBtn = document.getElementById('search-go');
-    const sections = document.querySelectorAll('.repo-section');
-    const dashboard = document.querySelector('.dashboard');
-    const showMine = document.getElementById('show-mine');
-    const approvalFilter = document.getElementById('approval-filter');
-    const statsEl = document.querySelector('.dashboard-stats');
-    const filteredEmpty = document.getElementById('filtered-empty');
+    const items = document.querySelectorAll('.item');
     const ghUrlRe = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/;
 
     function navigateToGhUrl() {
@@ -208,85 +321,45 @@
 
     goBtn.addEventListener('click', navigateToGhUrl);
 
-    // Apply both the search filter and the "show my PRs" toggle, hiding empty
-    // repo sections and keeping the header stats in sync with what's visible.
-    function applyFilters() {
+    // Filter across every section at once; a section whose items all disappear keeps its
+    // header so the counts still tell you what exists behind the filter.
+    function applyFilter() {
       const q = input.value.trim().toLowerCase();
-      const mine = showMine.checked;
-      const approval = approvalFilter.value; // 'all' | 'approved' | 'unapproved'
-      dashboard.classList.toggle('show-mine', mine);
-
-      let visiblePRs = 0;
-      let visibleRepos = 0;
-
-      sections.forEach(section => {
-        const items = section.querySelectorAll('.pr-item');
-        let visibleCount = 0;
-
-        items.forEach(item => {
-          const title = item.querySelector('.pr-title').textContent.toLowerCase();
-          const matchesSearch = !q || title.includes(q);
-          const own = item.classList.contains('pr-own');
-          const approved = item.classList.contains('is-approved');
-          const matchesApproval =
-            approval === 'all' ||
-            (approval === 'approved' && approved) ||
-            (approval === 'unapproved' && !approved);
-          const visible = matchesSearch && (mine || !own) && matchesApproval;
-          item.classList.toggle('hidden', !visible);
-          if (visible) visibleCount++;
-        });
-
-        section.classList.toggle('hidden', visibleCount === 0);
-        if (visibleCount > 0) {
-          visibleRepos++;
-          visiblePRs += visibleCount;
-        }
+      items.forEach(item => {
+        const haystack = item.dataset.title || '';
+        item.classList.toggle('hidden', !!q && !haystack.includes(q));
       });
-
-      statsEl.textContent = `${visiblePRs} PRs across ${visibleRepos} repos`;
-      if (filteredEmpty) {
-        filteredEmpty.classList.toggle('hidden', visiblePRs > 0 || sections.length === 0);
-      }
     }
 
-    showMine.addEventListener('change', applyFilters);
-    approvalFilter.addEventListener('change', applyFilters);
+    document.querySelectorAll('.pr-tab').forEach(tab => {
+      tab.addEventListener('click', (e) => {
+        const target = e.currentTarget.dataset.tab;
+        if (!target) return;
 
-    input.addEventListener('input', () => {
-      const q = input.value.trim().toLowerCase();
+        document.querySelectorAll('.pr-tab').forEach(t => t.classList.remove('active'));
+        e.currentTarget.classList.add('active');
 
-      // GitHub PR URL - enable button
-      const isGhUrl = ghUrlRe.test(q);
-      goBtn.disabled = !isGhUrl;
-      if (isGhUrl) return;
+        document.querySelectorAll('.pr-tab-content').forEach(c => c.classList.remove('active'));
+        document.querySelector(`[data-tab-content="${target}"]`).classList.add('active');
 
-      // Direct navigation: owner/repo#123 or owner/repo/123
-      const prMatch = q.match(/^([^/]+)\/([^#/]+)[#/](\d+)$/);
-      if (prMatch) {
-        // Show hint or navigate on Enter
-        return;
-      }
-
-      applyFilters();
+        // Keep the URL in step, so a reload or a shared link opens the same tab.
+        const url = new URL(window.location);
+        url.searchParams.set('tab', target);
+        history.replaceState(null, '', url);
+      });
     });
 
-    // Initial pass: own PRs are hidden by default, so correct the stats/empty
-    // state the server rendered (which counted every PR).
-    applyFilters();
+    input.addEventListener('input', () => {
+      goBtn.disabled = !ghUrlRe.test(input.value.trim());
+      applyFilter();
+    });
 
     input.addEventListener('keydown', (e) => {
       if (e.key !== 'Enter') return;
-
       const q = input.value.trim();
 
-      // GitHub PR URL
-      if (ghUrlRe.test(q)) {
-        navigateToGhUrl();
-        return;
-      }
+      if (ghUrlRe.test(q)) { navigateToGhUrl(); return; }
 
-      // Direct navigation: owner/repo#123 or owner/repo/123
       const prMatch = q.match(/^([^/]+)\/([^#/]+)[#/](\d+)$/);
       if (prMatch) {
         const [, owner, repo, number] = prMatch;
@@ -294,7 +367,6 @@
         return;
       }
 
-      // Direct navigation: owner/repo
       const repoMatch = q.match(/^([^/]+)\/([^/]+)$/);
       if (repoMatch) {
         const [, owner, repo] = repoMatch;

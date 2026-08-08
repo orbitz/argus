@@ -4,45 +4,46 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     .notifications { max-width: 900px; margin: 0 auto; padding: 1rem; }
     .notifications-header { margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; }
     .notifications-header h1 { margin: 0; }
-    .notifications-stats { color: #666; }
+    .notifications-stats { color: var(--fg-muted); }
 
     .notifications-toolbar { display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; }
     .toolbar-right { margin-left: auto; }
 
-    .filter-active { background: #0066cc; color: #fff; border-color: #0066cc; }
+    .filter-active { background: var(--accent); color: #fff; border-color: var(--accent); }
 
     .notification-item {
-      padding: 0.75rem 0;
-      border-bottom: 1px solid #eee;
+      padding: var(--space-2) var(--space-3);
+      border-bottom: 1px solid var(--border-subtle);
       display: flex;
       gap: 0.75rem;
       align-items: baseline;
     }
     .notification-item:last-child { border-bottom: none; }
 
-    .notification-repo { color: #666; font-size: 0.85rem; min-width: 12em; }
-    .notification-repo a { color: #666; text-decoration: none; }
-    .notification-repo a:hover { color: #0066cc; text-decoration: underline; }
-    .notification-number { color: #666; font-size: 0.9rem; min-width: 4em; }
+    .notification-repo { color: var(--fg-muted); font-size: 0.85rem; min-width: 12em; }
+    .notification-repo a { color: var(--fg-muted); text-decoration: none; }
+    .notification-repo a:hover { color: var(--accent); text-decoration: underline; }
+    .notification-number { color: var(--fg-muted); font-size: 0.9rem; min-width: 4em; }
     .notification-link { flex: 1; }
-    .notification-title { color: #222; text-decoration: none; }
-    .notification-title:hover { color: #0066cc; text-decoration: underline; }
-    .notification-draft { color: #886600; font-size: 0.8rem; }
-    .notification-meta { color: #888; font-size: 0.85rem; white-space: nowrap; }
+    .notification-title { color: var(--fg); text-decoration: none; }
+    .notification-title:hover { color: var(--accent); text-decoration: underline; }
+    .notification-draft { color: var(--warning); font-size: 0.8rem; }
+    .notification-meta { color: var(--fg-subtle); font-size: 0.85rem; white-space: nowrap; }
     .notification-actions { white-space: nowrap; }
     .notification-actions form { display: inline; }
 
-    .section-header { font-weight: 600; color: #444; margin: 1rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid #ddd; }
-    .section-header.dismissed { color: #888; }
+    .section-header { font-weight: 600; color: var(--fg-muted); margin: 1rem 0 0.5rem; padding-bottom: 0.25rem; border-bottom: 1px solid var(--border); }
+    .section-header.dismissed { color: var(--fg-subtle); }
 
-    .empty-state { color: #666; text-align: center; padding: 3rem; }
+    .empty-state { color: var(--fg-muted); text-align: center; padding: 3rem; }
 
-    .pagination { display: flex; gap: 1rem; justify-content: center; align-items: center; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #eee; }
+    .pagination { display: flex; gap: 1rem; justify-content: center; align-items: center; margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border-subtle); }
     .pagination .current { font-weight: 600; }
 
     @media (max-width: 768px) {
@@ -58,7 +59,7 @@
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/dashboard" class="nav-logo">Argus</a>
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16a2 2 0 001.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 008 16zM3 5a5 5 0 0110 0v2.947c0 .05.015.098.042.139l1.703 2.555A1.519 1.519 0 0113.482 13H2.518a1.519 1.519 0 01-1.263-2.36l1.703-2.554A.255.255 0 003 7.947V5z"/></svg>
         <span class="notification-badge hidden" id="notification-badge"></span>
@@ -106,6 +107,7 @@
 
     <% if (pending.length > 0) { %>
       <div class="section-header">Pending (<%= pendingCount %>)</div>
+      <div class="card">
       <% pending.forEach(function(item) { %>
         <div class="notification-item">
           <span class="notification-repo"><a href="/repos/<%= item.owner %>/<%= item.repo %>/pulls"><%= item.fullName %></a></span>
@@ -123,10 +125,12 @@
           </span>
         </div>
       <% }); %>
+      </div>
     <% } %>
 
     <% if (showDismissed && dismissed.length > 0) { %>
       <div class="section-header dismissed">Dismissed (<%= dismissed.length %>)</div>
+      <div class="card">
       <% dismissed.forEach(function(item) { %>
         <div class="notification-item">
           <span class="notification-repo"><a href="/repos/<%= item.owner %>/<%= item.repo %>/pulls"><%= item.fullName %></a></span>
@@ -144,6 +148,7 @@
           </span>
         </div>
       <% }); %>
+      </div>
     <% } %>
 
     <% if (totalPages > 1) { %>

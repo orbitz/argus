@@ -31,12 +31,8 @@ export const config = {
 
   github: {
     requestTimeoutMs: parseInt(optional('GITHUB_REQUEST_TIMEOUT_MS', '30000'), 10),
-    // Fetch the dashboard in one GraphQL query instead of ~316 REST calls. Falls back
-    // to the REST path automatically on error; set to '0' to disable outright.
-    dashboardGraphql: optional('DASHBOARD_GRAPHQL', '1') !== '0',
-    // How many repos the dashboard considers, and open PRs per repo.
-    dashboardRepoLimit: parseInt(optional('DASHBOARD_REPO_LIMIT', '15'), 10),
-    dashboardPrsPerRepo: parseInt(optional('DASHBOARD_PRS_PER_REPO', '10'), 10),
+    // The dashboard is built from GitHub search (see lib/dashboard-overview.ts), so it has
+    // no repo/PR limits to tune: what it shows is scoped by the search queries themselves.
   },
 
   // Background cache warming

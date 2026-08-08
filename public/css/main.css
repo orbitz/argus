@@ -1,33 +1,109 @@
 /* Clean minimal CSS */
+
+/* --- Design tokens ----------------------------------------------------------
+   One palette and one spacing scale for the whole app. Before these existed the
+   same idea was spelled several ways — two link blues, five greys for "muted"
+   text, three for borders — which is why pages that were individually fine did
+   not read as one product. */
+:root {
+  /* Text */
+  --fg: #1f2328;          /* body copy, titles */
+  --fg-muted: #57606a;    /* metadata, secondary labels */
+  --fg-subtle: #8c959f;   /* de-emphasised detail, placeholders */
+
+  /* Figure and ground. Content sits on white cards over a tinted page, which is what
+     makes a block read as its own object rather than as more of the same page. */
+  --canvas: #f2f4f7;
+  --card: #fff;
+  --shadow-card: 0 1px 2px rgba(31, 35, 40, 0.05);
+
+  /* Lines and surfaces */
+  --border: #d0d7de;         /* structural dividers */
+  --border-subtle: #e4e8ec;  /* dividers between rows in a list */
+  --surface: #f6f8fa;        /* panels, table headers */
+  --surface-hover: #f2f5f8;  /* row under the cursor */
+
+  /* Accents */
+  --accent: #0969da;
+  --accent-subtle: #ddeaf7;
+  --accent-strong: #0550ae;
+  --success: #1a7f37;
+  --success-emphasis: #2da44e;   /* filled buttons */
+  --success-surface: #eaf6ec;
+  --danger: #cf222e;
+  --danger-surface: #ffeef0;
+  --warning: #9a6700;
+  --warning-surface: #fff8e6;    /* notices, banners */
+  --warning-border: #e6d9a8;
+  --merged: #8250df;             /* merged is neither open nor closed */
+  --accent-hover: #0055aa;
+  --accent-surface: #ddf4ff;     /* selected rows, highlighted lines */
+  --surface-active: #e9edf1;     /* pressed / hovered controls */
+
+  /* Spacing scale. Sizes in between these are what made vertical rhythm drift. */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-5: 1.5rem;
+  --space-6: 2rem;
+
+  --radius: 6px;
+
+  /* Type */
+  --leading-body: 1.5;      /* prose and UI text */
+  --leading-tight: 1.3;     /* headings and single-line rows */
+  --font-ui: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-mono: 'SF Mono', Consolas, monospace;
+}
+
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
 html {
   font-size: 14px;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
-  background: #fff;
-  color: #222;
+  font-family: var(--font-ui);
+  background: var(--canvas);
+  color: var(--fg);
+  /* The app never set a line-height, so everything inherited the browser default of
+     roughly 1.2 — the single biggest reason dense pages read as a wall of text. */
+  line-height: var(--leading-body);
+  -webkit-font-smoothing: antialiased;
 }
 
 body { min-height: 100vh; }
 
-a { color: #0066cc; }
+a { color: var(--accent); }
 a:hover { text-decoration: underline; }
 
-h1, h2, h3 { font-weight: 600; margin: 1em 0 0.5em; }
-h1 { font-size: 1.25rem; }
-h2 { font-size: 1rem; color: #444; }
+/* A visible keyboard focus ring. Argus is driven by shortcuts, so losing track of
+   focus is a real cost; :focus-visible keeps it off mouse clicks. */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
 
-p { margin: 0.5em 0; }
+h1, h2, h3 {
+  font-weight: 600;
+  line-height: var(--leading-tight);
+  margin: var(--space-5) 0 var(--space-2);
+  /* Stops a heading from breaking with one orphaned word on the last line. */
+  text-wrap: balance;
+}
+h1 { font-size: 1.25rem; }
+h2 { font-size: 1rem; color: var(--fg-muted); }
+
+p { margin: var(--space-2) 0; }
 
 code, pre {
-  font-family: 'SF Mono', Consolas, monospace;
+  font-family: var(--font-mono);
   font-size: 0.9em;
 }
 
 /* Header */
 .site-header {
-  background: #f5f5f5;
-  border-bottom: 1px solid #ddd;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   padding: 0.5rem 1rem;
 }
 
@@ -39,25 +115,34 @@ code, pre {
 
 .nav-logo {
   font-weight: 700;
-  color: #222;
+  color: var(--fg);
   text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
 }
+
+/* The mark takes its colour from the link, so it stays legible wherever the header
+   sits and needs no second palette. */
+.nav-logo-mark { display: block; flex: none; }
+.nav-logo:hover { text-decoration: none; }
+.nav-logo:hover span { text-decoration: underline; }
 
 .nav-notifications {
   position: relative;
-  color: #666;
+  color: var(--fg-muted);
   text-decoration: none;
   display: flex;
   align-items: center;
   margin-left: auto;
 }
-.nav-notifications:hover { color: #222; text-decoration: none; }
+.nav-notifications:hover { color: var(--fg); text-decoration: none; }
 
 .notification-badge {
   position: absolute;
   top: -6px;
   right: -8px;
-  background: #cc0000;
+  background: var(--danger);
   color: #fff;
   font-size: 0.65rem;
   font-weight: 600;
@@ -71,7 +156,7 @@ code, pre {
   line-height: 1;
 }
 
-.nav-user { margin-left: 0.75rem; color: #666; }
+.nav-user { margin-left: 0.75rem; color: var(--fg-muted); }
 
 /* Main */
 .main-content {
@@ -84,43 +169,70 @@ input, textarea, select {
   font-family: inherit;
   font-size: inherit;
   background: #fff;
-  color: #222;
-  border: 1px solid #ccc;
+  color: var(--fg);
+  border: 1px solid var(--border);
   padding: 0.375rem 0.5rem;
 }
 
 input:focus, textarea:focus {
   outline: none;
-  border-color: #0066cc;
+  border-color: var(--accent);
 }
 
 button, .btn {
   font-family: inherit;
   font-size: inherit;
-  background: #f5f5f5;
-  color: #222;
-  border: 1px solid #ccc;
+  background: var(--surface);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
   padding: 0.375rem 0.75rem;
   cursor: pointer;
+  /* A two-word label like "Collapse all" was wrapping onto a second line and making the
+     button grow a row taller than its neighbours. Button labels are short by definition;
+     if one does not fit, the layout is wrong, not the label. */
+  white-space: nowrap;
+  /* The global 1.5 body leading applies here too and makes controls unevenly tall. */
+  line-height: 1.4;
 }
 
-button:hover, .btn:hover { background: #e5e5e5; }
-.btn-primary { background: #0066cc; color: #fff; border-color: #0066cc; }
-.btn-primary:hover { background: #0055aa; }
-.btn-danger { background: #cc0000; color: #fff; border-color: #cc0000; }
-.btn-success { background: #008800; color: #fff; border-color: #008800; }
+/* Inputs and selects are controls too: same edge, same radius, so a toolbar reads as one
+   row of related things rather than several unrelated widgets. */
+input[type="text"], input[type="search"], select, textarea {
+  font-family: inherit;
+  font-size: inherit;
+  color: var(--fg);
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.375rem 0.5rem;
+}
+
+/* Toolbars wrap as a group instead of squeezing their buttons. */
+.diff-controls, .comment-controls, .commit-controls, .dashboard-controls, .notifications-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+button:hover, .btn:hover { background: var(--surface-active); }
+.btn-primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.btn-primary:hover { background: var(--accent-hover); }
+.btn-danger { background: var(--danger); color: #fff; border-color: var(--danger); }
+.btn-success { background: var(--success); color: #fff; border-color: var(--success); }
 
 /* Tables */
 table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid #eee; }
-th { font-weight: 600; color: #666; }
+th, td { text-align: left; padding: 0.25rem 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+th { font-weight: 600; color: var(--fg-muted); }
 
 /* Lists */
 ul, ol { margin: 0.5em 0; padding-left: 1.5em; }
 
 /* Details/summary */
 details { margin: 0.5em 0; }
-summary { cursor: pointer; color: #0066cc; }
+summary { cursor: pointer; color: var(--accent); }
 summary:hover { text-decoration: underline; }
 
 /* Form actions */
@@ -133,8 +245,8 @@ summary:hover { text-decoration: underline; }
 .hidden { display: none !important; }
 
 /* Status */
-.additions { color: #008800; }
-.deletions { color: #cc0000; }
+.additions { color: var(--success); }
+.deletions { color: var(--danger); }
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -182,4 +294,152 @@ summary:hover { text-decoration: underline; }
     padding: 0.375rem 0.5rem;
     font-size: 0.9rem;
   }
+}
+
+/* --- Tabs -------------------------------------------------------------------
+   Shared by the PR page and the dashboard. The `pr-` prefix is historical: this
+   started life on the PR page, and pr.js still selects on it. */
+
+.pr-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 1rem;
+}
+
+.pr-tab {
+  padding: 0.5rem 0.75rem;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 0.9rem;
+  color: var(--fg-muted);
+  border-bottom: 2px solid transparent;
+}
+
+.pr-tab:hover {
+  color: var(--fg);
+}
+
+.pr-tab.active {
+  color: var(--fg);
+  font-weight: 600;
+  border-bottom-color: var(--accent);
+}
+
+.tab-pill {
+  display: inline-block;
+  background: var(--border);
+  color: var(--fg-muted);
+  font-weight: 400;
+  font-size: 0.8rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 10px;
+  margin-left: 0.25rem;
+  vertical-align: middle;
+}
+
+.pr-tab.active .tab-pill {
+  background: var(--accent-subtle);
+  color: var(--accent-strong);
+}
+
+.pr-tab-content { display: none; }
+.pr-tab-content.active { display: block; }
+
+/* --- Scannable rows ---------------------------------------------------------
+   Argus is mostly lists of things to open: PRs, repos, notifications, mentions.
+   Each page had grown its own row class with its own padding and its own hairline,
+   and none of them reacted to the cursor — so a long list read as one undivided
+   block and there was nothing to confirm which line you were about to click.
+
+   These rules are deliberately low-specificity, so a page that needs something
+   different can still override them. */
+.item,
+.pull-item,
+.repo-item,
+.notification-item,
+.pr-item {
+  /* Enough vertical room that the title and its metadata read as one unit,
+     separated from the next row. */
+  padding: var(--space-2) var(--space-2);
+  border-bottom: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  transition: background-color 0.08s ease-in-out;
+}
+
+.item:hover,
+.pull-item:hover,
+.repo-item:hover,
+.notification-item:hover,
+.pr-item:hover {
+  background: var(--surface-hover);
+}
+
+.item:last-child,
+.pull-item:last-child,
+.repo-item:last-child,
+.notification-item:last-child,
+.pr-item:last-child {
+  border-bottom: none;
+}
+
+/* Numbers line up when they are the same width, which makes a column of PR numbers
+   or counts scannable instead of ragged. */
+.item-number,
+.pr-number,
+.tab-pill,
+.section-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- Cards ------------------------------------------------------------------
+   Everything the eye should treat as one thing goes in one card: a list of PRs, a
+   panel of stats, a comment. Against the tinted canvas each card has an edge, so
+   blocks stop bleeding into one another without needing an outline on every element
+   — outlines everywhere read as noise and stop meaning anything. */
+.card,
+.item-list,
+.repos-list,
+.pulls-list {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  /* Rows sit flush to the edge, so their dividers must be clipped by the radius. */
+  overflow: hidden;
+  list-style: none;
+  margin: 0 0 var(--space-4);
+}
+
+.card-header {
+  display: flex;
+  align-items: baseline;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.card-body { padding: var(--space-3); }
+
+/* Rows are flush inside a card: the card supplies the edge, so a row that also
+   rounded its own corners would produce a visible double border on hover. */
+.item-list > .item,
+.repos-list > .repo-item,
+.pulls-list > .pull-item {
+  border-radius: 0;
+  padding-left: var(--space-3);
+  padding-right: var(--space-3);
+}
+
+/* A label that names the card underneath it, rather than a heading floating in
+   space above undifferentiated rows. */
+.group-title {
+  margin-top: var(--space-5);
+}
+
+.site-header {
+  background: var(--card);
 }

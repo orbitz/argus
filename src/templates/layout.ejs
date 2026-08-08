@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <% if (typeof extraCss !== 'undefined' && extraCss) { %>
     <link rel="stylesheet" href="/static/css/<%= extraCss %>">
@@ -12,7 +13,7 @@
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/" class="nav-logo">Argus</a>
+      <a href="/" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <% if (typeof user !== 'undefined' && user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16a2 2 0 001.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 008 16zM3 5a5 5 0 0110 0v2.947c0 .05.015.098.042.139l1.703 2.555A1.519 1.519 0 0113.482 13H2.518a1.519 1.519 0 01-1.263-2.36l1.703-2.554A.255.255 0 003 7.947V5z"/></svg>

@@ -16,7 +16,6 @@ import { config } from '../config.js';
 import { getTokenUser } from '../middleware/auth.js';
 import {
   getOctokit,
-  fetchDashboardGraphql,
   fetchPRFiles,
   fetchIssueComments,
   fetchReviewComments,
@@ -25,16 +24,19 @@ import {
   fetchReviews,
   fetchPR,
   prKey,
-  dashboardCacheKey,
-  type DashboardPull,
 } from './github.js';
+import {
+  fetchDashboardOverview,
+  overviewCacheKey,
+  type OverviewPull,
+} from './dashboard-overview.js';
 import { getFetchedAt } from './api-cache.js';
 import { query } from '../db/index.js';
 
 interface WarmTarget {
   owner: string;
   repo: string;
-  pr: DashboardPull;
+  pr: OverviewPull;
 }
 
 /** Last `updatedAt` we successfully warmed, per PR. Cheap unchanged-check without a fetch. */
@@ -73,21 +75,31 @@ async function runPass(log: FastifyBaseLogger): Promise<void> {
   const started = Date.now();
   const octokit = getOctokit();
 
-  // Warms `dashboard:<login>` as a side effect.
-  const repos = await fetchDashboardGraphql(octokit, user.login);
+  // Warms the dashboard's own cache entry as a side effect, which is what makes the
+  // dashboard render from SQLite instead of paying ~6s of GitHub search on first visit.
+  const overview = await fetchDashboardOverview(octokit, user.login);
 
-  // Prioritise PRs the user is involved in — their own, and ones they have reviewed.
+  // Warm what the dashboard actually shows, in the order you are likely to open it:
+  // PRs from people that are blocked on your review, then your own PRs that a reviewer
+  // has responded to, then the rest. Bot PRs come last — they are numerous, and a
+  // dependency bump is rarely what you open first.
+  const ordered: OverviewPull[] = [
+    ...overview.waiting.humans,
+    ...overview.mine.changesRequested.items,
+    ...overview.mine.approved.items,
+    ...overview.mine.awaiting.items,
+    ...overview.waiting.bots,
+  ];
+
+  // The same PR can appear in more than one section; warming it twice is wasted work.
+  const seen = new Set<string>();
   const candidates: WarmTarget[] = [];
-  for (const repo of repos) {
-    for (const pr of repo.pulls) {
-      const involved =
-        pr.author === user.login || pr.reviews.some((r) => r.user.login === user.login);
-      if (involved) candidates.push({ owner: repo.owner, repo: repo.name, pr });
-    }
+  for (const pr of ordered) {
+    const key = `${pr.owner}/${pr.repo}#${pr.number}`;
+    if (seen.has(key) || !pr.owner || !pr.repo) continue;
+    seen.add(key);
+    candidates.push({ owner: pr.owner, repo: pr.repo, pr });
   }
-
-  // Most recently updated first, then drop anything already warm at this exact revision.
-  candidates.sort((a, b) => b.pr.updatedAt.localeCompare(a.pr.updatedAt));
 
   const stale = candidates.filter((c) => {
     const warmed = lastWarmedAt(c.owner, c.repo, c.pr.number);
@@ -118,13 +130,13 @@ async function runPass(log: FastifyBaseLogger): Promise<void> {
   log.info(
     {
       ms: Date.now() - started,
-      repos: repos.length,
+      waiting: overview.waiting.total,
       candidates: candidates.length,
       warmed,
       failed,
       unchangedSkipped: candidates.length - stale.length,
       skippedForCap,
-      dashboardCachedAt: getFetchedAt(dashboardCacheKey(user.login))?.toISOString() ?? null,
+      dashboardCachedAt: getFetchedAt(overviewCacheKey(user.login))?.toISOString() ?? null,
     },
     'prefetch pass complete'
   );

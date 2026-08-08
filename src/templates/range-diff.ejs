@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
     .range-diff-page {
@@ -15,11 +16,11 @@
     .breadcrumb {
       font-size: 0.9rem;
       margin-bottom: 1rem;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     .breadcrumb a {
-      color: #0066cc;
+      color: var(--accent);
       text-decoration: none;
     }
 
@@ -28,8 +29,8 @@
     }
 
     .range-diff-header {
-      background: #f6f8fa;
-      border: 1px solid #ddd;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 6px;
       padding: 1rem;
       margin-bottom: 1.5rem;
@@ -49,16 +50,16 @@
 
     .revision-label {
       font-weight: 600;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     .revision-value {
       font-family: monospace;
-      color: #222;
+      color: var(--fg);
     }
 
     .revision-time {
-      color: #888;
+      color: var(--fg-subtle);
       font-size: 0.85rem;
     }
 
@@ -73,19 +74,19 @@
     .info-box h2 {
       font-size: 1rem;
       margin: 0 0 0.5rem;
-      color: #666;
+      color: var(--fg-muted);
     }
 
     .info-box p {
       margin: 0.25rem 0;
       font-size: 0.9rem;
       line-height: 1.5;
-      color: #444;
+      color: var(--fg-muted);
     }
 
     .range-diff-output {
-      background: #f6f8fa;
-      border: 1px solid #ddd;
+      background: var(--surface);
+      border: 1px solid var(--border);
       border-radius: 6px;
       padding: 1rem;
       overflow-x: auto;
@@ -115,7 +116,7 @@
     .no-changes {
       text-align: center;
       padding: 3rem 1rem;
-      color: #666;
+      color: var(--fg-muted);
       font-size: 1rem;
     }
 
@@ -130,7 +131,7 @@
     }
 
     .fallback-link a {
-      color: #0066cc;
+      color: var(--accent);
       text-decoration: none;
       font-size: 0.9rem;
     }
@@ -168,7 +169,7 @@
 <body>
   <header class="site-header">
     <nav class="nav-container">
-      <a href="/dashboard" class="nav-logo">Argus</a>
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
       <a href="/pr/<%= owner %>/<%= repo %>/<%= prNumber %>">&larr; PR #<%= prNumber %></a>
       <% if (user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
