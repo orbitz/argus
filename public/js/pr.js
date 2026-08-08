@@ -13,6 +13,7 @@
   // State
   let pollingInterval = null;
   let lastKnownHeadSha = config.headSha;
+  let updatesAvailable = false;
 
   function showLoadingOverlay() {
     sessionStorage.setItem('argus-loading', '1');
@@ -341,7 +342,14 @@
 
     // Check updates button
     if (checkUpdatesBtn) {
-      checkUpdatesBtn.addEventListener('click', checkForUpdates);
+      checkUpdatesBtn.addEventListener('click', () => {
+        if (updatesAvailable) {
+          showLoadingOverlay();
+          window.location.reload();
+        } else {
+          checkForUpdates();
+        }
+      });
     }
 
     // Reload link
@@ -400,9 +408,11 @@
       const data = await response.json();
 
       if (data.head_sha && data.head_sha !== lastKnownHeadSha) {
+        updatesAvailable = true;
         showUpdatesBanner();
         if (checkUpdatesBtn) {
-          checkUpdatesBtn.textContent = 'Updates available!';
+          checkUpdatesBtn.textContent = 'Reload for updates';
+          checkUpdatesBtn.disabled = false;
         }
         if (pollIntervalTextEl) {
           pollIntervalTextEl.textContent = 'Updates available';
