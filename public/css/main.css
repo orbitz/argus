@@ -250,7 +250,9 @@ summary:hover { text-decoration: underline; }
 
 /* Responsive */
 @media (max-width: 768px) {
-  html { font-size: 13px; }
+  /* Base size deliberately unchanged. Shrinking it to 13/12px made a phone the hardest
+     place to read the text, which is backwards: the small screen needs the padding cut,
+     not the type. */
 
   .site-header { padding: 0.5rem; }
 
@@ -268,15 +270,32 @@ summary:hover { text-decoration: underline; }
     padding: 0.5rem 0.75rem;
   }
 
-  table {
+  /* Wide tables scroll rather than push the page sideways. The diff table is excluded:
+     display:block would drop its column alignment, and its own wrapper scrolls it. */
+  table:not(.diff-table) {
     display: block;
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
   }
+
+  /* iOS zooms the page when a focused field is under 16px, and then leaves it zoomed. */
+  input[type="text"], input[type="search"], select, textarea {
+    font-size: 16px;
+  }
+}
+
+/* Touch targets. A 28px-tall button is a coin toss with a thumb; the pointer query keeps
+   the mouse-driven UI as dense as it was. */
+@media (pointer: coarse) {
+  button, .btn, .pr-tab {
+    min-height: 2.5rem;
+  }
+  .nav-links a, .nav-notifications {
+    padding: 0.25rem;
+  }
 }
 
 @media (max-width: 480px) {
-  html { font-size: 12px; }
 
   .site-header { padding: 0.375rem; }
 
@@ -305,6 +324,10 @@ summary:hover { text-decoration: underline; }
   gap: 0;
   border-bottom: 1px solid var(--border);
   margin-bottom: 1rem;
+  /* Narrow screens scroll the strip instead of pushing the whole page sideways: three
+     tabs with their counts need ~390px, which is wider than a phone. */
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 
 .pr-tab {
@@ -315,6 +338,11 @@ summary:hover { text-decoration: underline; }
   font-size: 0.9rem;
   color: var(--fg-muted);
   border-bottom: 2px solid transparent;
+  /* Square: the shared button radius curled the active tab's underline up at both ends,
+     so it read as a bubble rather than an underline. */
+  border-radius: 0;
+  flex: none;
+  white-space: nowrap;
 }
 
 .pr-tab:hover {

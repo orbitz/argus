@@ -57,12 +57,16 @@
         gap: 1rem;
         padding: 0.5rem;
       }
+      /* Content first. The progress panel and shortcuts used to sit above the PR title,
+         so a phone opened to a summary of a diff it had not shown yet. */
       .pr-left-sidebar {
         position: static;
-        order: 0;
+        order: 3;
       }
       .pr-right-sidebar {
         position: static;
+        max-height: none;
+        overflow: visible;
         order: 2;
         border-top: 1px solid var(--border);
         padding-top: 1rem;
@@ -74,6 +78,7 @@
         font-size: 1.1rem;
         padding-right: 0;
       }
+      .keyboard-help { display: none; }
       .review-button-container {
         position: static;
         margin-top: 0.5rem;

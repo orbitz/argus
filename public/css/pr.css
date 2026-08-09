@@ -315,6 +315,15 @@
 
 /* Diff files */
 .diff-container { margin-top: 1rem; }
+/* The diff table is the one thing on the page that cannot be made narrow: line numbers,
+   a gutter and a line of code have a floor width. Without a scroll container the card's
+   overflow:hidden (which keeps its rounded corners) simply clips the code, so on a phone
+   the ends of long lines were unreachable rather than merely off-screen. */
+.diff-content {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .diff-file {
   margin-bottom: var(--space-3);
   border: 1px solid var(--border);
