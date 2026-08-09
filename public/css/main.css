@@ -471,3 +471,59 @@ summary:hover { text-decoration: underline; }
 .site-header {
   background: var(--card);
 }
+
+/* --- Installed app ----------------------------------------------------------
+   With display:standalone there is no browser chrome, so the header sits directly
+   under the status bar and, on a notched phone, partly behind it. These insets are
+   zero everywhere else, so the rule costs nothing in a normal tab. */
+@media (display-mode: standalone) {
+  .site-header {
+    padding-top: calc(0.5rem + env(safe-area-inset-top));
+    padding-left: calc(1rem + env(safe-area-inset-left));
+    padding-right: calc(1rem + env(safe-area-inset-right));
+  }
+
+  body {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* Nothing navigates back to a browser tab, so a stray horizontal rubber-band looks
+     like a broken layout rather than a scroll. */
+  html, body {
+    overscroll-behavior-x: none;
+  }
+}
+
+/* --- Install banner ---------------------------------------------------------- */
+.install-banner {
+  position: fixed;
+  left: var(--space-2);
+  right: var(--space-2);
+  bottom: calc(var(--space-2) + env(safe-area-inset-bottom));
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 4px 16px rgba(31, 35, 40, 0.18);
+}
+
+.install-banner-text { flex: 1; font-size: 0.85rem; }
+
+.install-banner-close {
+  border: none;
+  background: none;
+  color: var(--fg-muted);
+  font-size: 1rem;
+  line-height: 1;
+  padding: var(--space-1);
+  cursor: pointer;
+}
+
+@media (min-width: 768px) {
+  /* Desktop keeps the browser's own install affordance. */
+  .install-banner { display: none; }
+}

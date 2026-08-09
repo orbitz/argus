@@ -1,0 +1,16 @@
+<%
+  // Installability. Matches the pattern used across our other sites: a manifest, an
+  // apple-touch icon, and the iOS meta tags — Safari's Add to Home Screen reads those
+  // rather than the manifest's display mode.
+  //
+  // Everything lives under /static/ because Argus can be served from github.com (see
+  // docs/github-proxy.md), where root paths belong to the real site.
+%>
+<link rel="manifest" href="/static/manifest.json">
+<link rel="apple-touch-icon" href="/static/img/apple-touch-icon.png">
+<meta name="theme-color" content="#ffffff">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Argus">
+<script src="/static/js/pwa.js" defer></script>

@@ -86,6 +86,19 @@ async function start() {
     await fastify.register(fastifyStatic, {
       root: join(__dirname, '..', 'public'),
       prefix: '/static/',
+      setHeaders: (res: any, path: string) => {
+        // A service worker may only control paths under its own directory unless the
+        // response says otherwise. Argus serves it from /static/ (root paths belong to
+        // GitHub when running behind the proxy), so it needs this to control the origin.
+        if (path.endsWith('/sw.js')) {
+          res.setHeader('Service-Worker-Allowed', '/');
+          // The worker itself must never be served stale, or a bad one is hard to retire.
+          res.setHeader('Cache-Control', 'no-cache');
+        }
+        if (path.endsWith('manifest.json')) {
+          res.setHeader('Content-Type', 'application/manifest+json; charset=utf-8');
+        }
+      },
       // Previously served with max-age=0, so pr.js (56 KB) was revalidated on every
       // navigation. Assets still carry ETags, so a deploy is picked up on the next
       // revalidation after this window.
