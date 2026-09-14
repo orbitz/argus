@@ -330,8 +330,13 @@
   border-radius: var(--radius);
   background: var(--card);
   box-shadow: var(--shadow-card);
-  /* The file header tints the top edge, so it has to be clipped to the radius. */
+  /* The file header tints the top edge, so it has to be clipped to the radius.
+     clip rather than hidden: a hidden ancestor is the nearest scroll container,
+     which would pin the sticky file header to a box that never scrolls. clip
+     clips without creating one, so the header keeps sticking to the viewport.
+     hidden stays first as the fallback for browsers without clip support. */
   overflow: hidden;
+  overflow: clip;
 }
 
 .file-header {
