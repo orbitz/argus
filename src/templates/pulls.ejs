@@ -14,7 +14,7 @@
        this has to hold for every element on the page. */
     [hidden] { display: none !important; }
 
-    .pulls-page { max-width: 900px; margin: 0 auto; padding: 1rem; }
+    .pulls-page { max-width: 1280px; margin: 0 auto; padding: 1rem; }
     .pulls-truncated {
       margin: 0 0 1rem;
       padding: 0.5rem 0.75rem;
@@ -76,13 +76,45 @@
        The GitHub icon is a real link of its own and sits above that overlay. */
     .pull-link { position: absolute; inset: 0; }
 
-    .pull-row { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.625rem 0; }
+    /* One fixed column per field, so the eye can scan straight down the list. The
+       template is shared by the stack rows and the standalone rows, and only holds
+       fields every row has: badges that come and go (draft, approvals) live inside
+       the title cell instead, or most rows would show an empty gap where a sparse
+       column sits. Only the title flexes; the rest are fixed widths that do not
+       depend on content, so nothing shifts between rows. */
+    .pull-row {
+      display: grid;
+      grid-template-columns:
+        4em         /* number */
+        minmax(0, 1fr)  /* title, with draft and approval badges inline */
+        4.5ch       /* additions */
+        4.5ch       /* deletions */
+        16ch        /* branch */
+        1.5em       /* external icon */
+        9em;        /* author */
+      column-gap: 0.75rem;
+      align-items: baseline;
+      padding: 0.625rem 0;
+    }
     .pull-item:hover { background: var(--surface); }
     .pull-item:hover .pull-title { color: var(--accent); }
-    .pull-number { color: var(--fg-muted); font-size: 0.9rem; min-width: 4em; }
-    .pull-title { flex: 1; color: var(--fg); min-width: 0; }
-    .pull-draft { color: var(--warning); font-size: 0.8rem; }
-    .pull-author { color: var(--fg-subtle); font-size: 0.85rem; white-space: nowrap; }
+    .pull-number { grid-column: 1; color: var(--fg-muted); font-size: 0.9rem; }
+    .pull-title {
+      grid-column: 2; color: var(--fg); min-width: 0;
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem;
+    }
+    .pull-draft { color: var(--warning); font-size: 0.8rem; white-space: nowrap; }
+    .pull-author {
+      grid-column: 7;
+      color: var(--fg-subtle); font-size: 0.85rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pull-external { grid-column: 6; }
+    /* The wrapper disappears into the grid; its two spans become columns 3 and 4. */
+    .pull-stat { display: contents; }
+    .pull-stat .additions { grid-column: 3; }
+    .pull-stat .deletions { grid-column: 4; }
+    .pull-branch { grid-column: 5; }
     .pull-external {
       align-self: center;
       position: relative; z-index: 1;
@@ -103,7 +135,7 @@
     .pull-branch {
       color: var(--fg-subtle); font-size: 0.78rem; white-space: nowrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      overflow: hidden; text-overflow: ellipsis; max-width: 16ch;
+      overflow: hidden; text-overflow: ellipsis;
     }
 
     .pull-approved { color: var(--success); font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
@@ -172,8 +204,12 @@
     @media (max-width: 768px) {
       .pulls-page { padding: 0.75rem; }
       .pulls-filters { flex-wrap: wrap; }
-      .pull-row { flex-wrap: wrap; gap: 0.5rem; }
-      .pull-number { min-width: auto; }
+      /* The fixed columns assume more room than a narrow screen has, so rows fall
+         back to wrapped flex here; the grid-column names are ignored in that layout. */
+      .pull-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .pull-stat { display: inline-flex; gap: 0.45rem; }
+      .pull-title { flex: 1; }
+      .pull-branch { max-width: 16ch; }
       .stack-node-row .pull-row { flex-wrap: nowrap; }
     }
 
@@ -216,7 +252,10 @@
     function rowMain(pr) {
       let h = '';
       h += '<span class="pull-number">#' + pr.number + '</span>';
-      h += '<span class="pull-title">' + esc(pr.title) + '</span>';
+      // Draft and approval badges sit inside the title cell, after the text. They do
+      // not go in columns of their own: rows without them would leave a hole in the
+      // grid, and a hole between the title and the numbers breaks the scan.
+      h += '<span class="pull-title"><span class="pull-title-text">' + esc(pr.title) + '</span>';
       if (pr.draft) h += '<span class="pull-draft">(draft)</span>';
       if (pr.approved) h += '<span class="pull-approved" title="You approved this PR">✓ Approved by you</span>';
       if (pr.otherApprovers && pr.otherApprovers.length > 0) {
@@ -224,13 +263,16 @@
         const label = others.length === 1 ? others[0] : others[0] + ' +' + (others.length - 1);
         h += '<span class="pull-approved-others" title="Approved by ' + esc(others.join(', ')) + '">✓ ' + esc(label) + '</span>';
       }
+      h += '</span>';
       // Size of the PR at a glance: additions first, then deletions, to the left of the
       // branch name. The route supplies the counts when the cached diffstat is ready;
       // null renders nothing and the background fill shows on the next load.
+      // The wrapper is display:contents in the grid (its spans are columns of their
+      // own), so it has no box to hover; each span carries the tooltip itself.
       if (pr.additions != null) {
-        h += '<span class="pull-stat" title="Lines added and lines removed">'
-          + '<span class="additions">+' + pr.additions + '</span>'
-          + '<span class="deletions">-' + pr.deletions + '</span>'
+        h += '<span class="pull-stat">'
+          + '<span class="additions" title="Lines added">+' + pr.additions + '</span>'
+          + '<span class="deletions" title="Lines removed">-' + pr.deletions + '</span>'
           + '</span>';
       }
       if (pr.headRef) h += '<span class="pull-branch" title="' + esc(pr.headRef) + '">' + esc(pr.headRef) + '</span>';
