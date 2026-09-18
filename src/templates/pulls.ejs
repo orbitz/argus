@@ -53,7 +53,7 @@
     /* The rail draws the shape of a stack. A filtered stack is no longer that shape, so
        it is not drawn while a query is active. */
     .pulls-page.is-searching .rail { display: none; }
-    .pulls-page.is-searching .stack-node-link .pull-row { padding-left: 0.5rem; }
+    .pulls-page.is-searching .stack-node-row .pull-row { padding-left: 0.5rem; }
 
     .pulls-header { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
     .pulls-header h1 { font-size: 1.25rem; margin: 0; }
@@ -69,18 +69,27 @@
     .section-heading:first-of-type { margin-top: 0.25rem; }
 
     .pulls-list { margin: 0; padding: 0; list-style: none; }
-    .pull-item { border-bottom: 1px solid var(--border-subtle); }
+    .pull-item { position: relative; border-bottom: 1px solid var(--border-subtle); }
     .pull-item:last-child { border-bottom: none; }
 
-    .pull-link { display: block; padding: 0.625rem 0; text-decoration: none; color: inherit; }
-    .pull-link:hover { background: var(--surface); }
-    .pull-link:hover .pull-title { color: var(--accent); }
+    /* The PR link stretches over the whole row, so a click anywhere opens it here.
+       The GitHub icon is a real link of its own and sits above that overlay. */
+    .pull-link { position: absolute; inset: 0; }
 
-    .pull-row { display: flex; gap: 0.75rem; align-items: baseline; }
+    .pull-row { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.625rem 0; }
+    .pull-item:hover { background: var(--surface); }
+    .pull-item:hover .pull-title { color: var(--accent); }
     .pull-number { color: var(--fg-muted); font-size: 0.9rem; min-width: 4em; }
     .pull-title { flex: 1; color: var(--fg); min-width: 0; }
     .pull-draft { color: var(--warning); font-size: 0.8rem; }
     .pull-author { color: var(--fg-subtle); font-size: 0.85rem; white-space: nowrap; }
+    .pull-external {
+      align-self: center;
+      position: relative; z-index: 1;
+      display: inline-flex;
+      color: var(--fg-subtle);
+    }
+    .pull-external:hover { color: var(--accent); }
     .pull-branch {
       color: var(--fg-subtle); font-size: 0.78rem; white-space: nowrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -101,10 +110,12 @@
     .stack-node { border-bottom: 1px solid #f2f2f2; }
     .stack-node:last-child { border-bottom: none; }
 
-    .stack-node-link { display: flex; align-items: stretch; text-decoration: none; color: inherit; }
-    .stack-node-link:hover { background: var(--surface); }
-    .stack-node-link:hover .pull-title { color: var(--accent); }
-    .stack-node-link .pull-row { flex: 1; align-items: center; padding: 0.5rem 0.5rem 0.5rem 0; }
+    .stack-node-row { display: flex; align-items: stretch; position: relative; }
+    .stack-node-row:hover { background: var(--surface); }
+    .stack-node-row:hover .pull-title { color: var(--accent); }
+    .stack-node-row .pull-row { flex: 1; align-items: center; padding: 0.5rem 0.5rem 0.5rem 0; }
+    /* Same stretched overlay as .pull-link, for the rail rows. */
+    .stack-node-link { position: absolute; inset: 0; }
 
     .rail { display: flex; align-items: stretch; flex: 0 0 auto; }
     .rail-cell { position: relative; width: 22px; flex: 0 0 22px; }
@@ -153,14 +164,14 @@
       .pulls-filters { flex-wrap: wrap; }
       .pull-row { flex-wrap: wrap; gap: 0.5rem; }
       .pull-number { min-width: auto; }
-      .stack-node-link .pull-row { flex-wrap: nowrap; }
+      .stack-node-row .pull-row { flex-wrap: nowrap; }
     }
 
     @media (max-width: 480px) {
       .pulls-page { padding: 0.5rem; }
       .pulls-header h1 { font-size: 1rem; }
       .filter-link { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
-      .pull-link { padding: 0.5rem 0; }
+      .pull-row { padding: 0.5rem 0; }
       .pull-title { font-size: 0.9rem; }
       .pull-author { font-size: 0.8rem; }
       .rail-cell { width: 16px; flex-basis: 16px; }
@@ -190,7 +201,9 @@
         .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
-    function rowBody(pr) {
+    // Everything up to and including the branch name. The GitHub icon and the author
+    // name come after it, in that order, in both row shapes below.
+    function rowMain(pr) {
       let h = '';
       h += '<span class="pull-number">#' + pr.number + '</span>';
       h += '<span class="pull-title">' + esc(pr.title) + '</span>';
@@ -202,8 +215,24 @@
         h += '<span class="pull-approved-others" title="Approved by ' + esc(others.join(', ')) + '">✓ ' + esc(label) + '</span>';
       }
       if (pr.headRef) h += '<span class="pull-branch" title="' + esc(pr.headRef) + '">' + esc(pr.headRef) + '</span>';
-      h += '<span class="pull-author">' + esc(pr.user.login) + '</span>';
       return h;
+    }
+    function rowAuthor(pr) {
+      return '<span class="pull-author">' + esc(pr.user.login) + '</span>';
+    }
+    // Octicon link-external (octicons, MIT): the icon that says "this goes to another site".
+    function externalIcon(pr, owner, repo) {
+      const url = 'https://github.com/' + esc(owner) + '/' + esc(repo) + '/pull/' + pr.number;
+      return '<a class="pull-external" href="' + url + '" target="_blank" rel="noopener" '
+        + 'title="Open on github.com" aria-label="Open pull request #' + pr.number + ' on github.com">'
+        + '<svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">'
+        + '<path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>'
+        + '</svg></a>';
+    }
+    // The PR link stretches over the whole row (see .pull-link / .stack-node-link), so
+    // it is an empty anchor; the icon carries the accessible name for this row instead.
+    function prLink(owner, repo, pr, cls) {
+      return '<a href="/pr/' + esc(owner) + '/' + esc(repo) + '/' + pr.number + '" class="' + cls + '"></a>';
     }
   %>
 
@@ -255,7 +284,7 @@
           <ul class="stack-nodes">
             <% stack.nodes.forEach(node => { const pr = node.pr; %>
               <li class="stack-node js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-                <a href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>" class="stack-node-link">
+                <div class="stack-node-row">
                   <span class="rail">
                     <% node.cells.forEach((cell, idx) => {
                          const isNodeCell = idx === node.cells.length - 1;
@@ -268,8 +297,9 @@
                          }
                     %><span class="<%= cls %>"><% if (isNodeCell) { %><span class="dot"></span><% } %></span><% }); %>
                   </span>
-                  <span class="pull-row"><%- rowBody(pr) %></span>
-                </a>
+                  <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
+                  <%- prLink(owner, repo, pr, 'stack-node-link') %>
+                </div>
               </li>
             <% }); %>
           </ul>
@@ -284,9 +314,7 @@
       <ul class="pulls-list">
         <% standalone.forEach(pr => { %>
           <li class="pull-item js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-            <a href="/pr/<%= owner %>/<%= repo %>/<%= pr.number %>" class="pull-link">
-              <div class="pull-row"><%- rowBody(pr) %></div>
-            </a>
+            <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %><%- prLink(owner, repo, pr, 'pull-link') %></div>
           </li>
         <% }); %>
       </ul>
