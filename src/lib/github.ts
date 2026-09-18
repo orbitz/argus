@@ -2,7 +2,7 @@ import { Octokit } from '@octokit/rest';
 import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import { config } from '../config.js';
-import { cachedFetch, TTL, type CacheMode } from './api-cache.js';
+import { cachedFetch, readCached, TTL, type CacheMode } from './api-cache.js';
 
 const ArgusOctokit = Octokit.plugin(retry, throttling);
 
@@ -82,6 +82,10 @@ const prIssueCommentsKey = (owner: string, repo: string, n: number) =>
 const prCommitsKey = (owner: string, repo: string, n: number) => `pr-commits:${owner}/${repo}#${n}`;
 const prTimelineKey = (owner: string, repo: string, n: number) => `pr-timeline:${owner}/${repo}#${n}`;
 const prHeadShaKey = (owner: string, repo: string, n: number) => `pr-head-sha:${owner}/${repo}#${n}`;
+// Pins the head and base SHA, so a push or a retarget produces a new key and the old
+// value can never be served for the new code.
+const prDiffstatKey = (owner: string, repo: string, n: number, headSha: string, baseSha: string) =>
+  `pr-diffstat:${owner}/${repo}#${n}@${headSha}..${baseSha}`;
 const checksKey = (owner: string, repo: string, ref: string) => `checks:${owner}/${repo}@${ref}`;
 const statusKey = (owner: string, repo: string, ref: string) => `status:${owner}/${repo}@${ref}`;
 
@@ -94,6 +98,7 @@ export {
   prCommitsKey,
   prTimelineKey,
   prHeadShaKey,
+  prDiffstatKey,
 };
 
 // API response types
@@ -220,6 +225,58 @@ export async function fetchPR(
     }
   );
   return result.data;
+}
+
+/** Line counts for a PR, from the same `pulls.get` response the PR page caches. */
+export interface PullDiffstat {
+  additions: number;
+  deletions: number;
+}
+
+/**
+ * Additions and deletions for a PR. The response is cached under a key that carries the
+ * head and base SHA, so the counts move exactly when the diff does; a push or a retarget
+ * is a key miss and the next fetch recomputes from scratch.
+ */
+export async function fetchPullDiffstat(
+  octokit: Octokit,
+  owner: string,
+  repo: string,
+  prNumber: number,
+  headSha: string,
+  baseSha: string
+): Promise<PullDiffstat> {
+  const result = await cachedFetch<PullDiffstat>(
+    prDiffstatKey(owner, repo, prNumber, headSha, baseSha),
+    { ttlMs: TTL.diffstat },
+    async (headers) => {
+      const response = await octokit.pulls.get({
+        owner,
+        repo,
+        pull_number: prNumber,
+        headers,
+      });
+      return {
+        data: { additions: response.data.additions, deletions: response.data.deletions },
+        etag: response.headers.etag || null,
+      };
+    }
+  );
+  return result.data;
+}
+
+/**
+ * The cached diffstat for these SHAs, or null. Never touches the network — the pulls
+ * list shows whatever is already computed and fills the rest in the background.
+ */
+export function readPullDiffstatCache(
+  owner: string,
+  repo: string,
+  prNumber: number,
+  headSha: string,
+  baseSha: string
+): PullDiffstat | null {
+  return readCached<PullDiffstat>(prDiffstatKey(owner, repo, prNumber, headSha, baseSha));
 }
 
 // Fetch PR files

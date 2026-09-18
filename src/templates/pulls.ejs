@@ -90,6 +90,16 @@
       color: var(--fg-subtle);
     }
     .pull-external:hover { color: var(--accent); }
+    .pull-stat {
+      display: inline-flex; gap: 0.45rem;
+      font-size: 0.8rem; white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+    }
+    /* A fixed cell per count, right-aligned, so the numbers line up down the list no
+       matter how many digits a row has. 4ch fits the sign plus three digits; a larger
+       count grows its own cell and nudges only that row. */
+    .pull-stat .additions,
+    .pull-stat .deletions { min-width: 4ch; text-align: right; }
     .pull-branch {
       color: var(--fg-subtle); font-size: 0.78rem; white-space: nowrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -213,6 +223,15 @@
         const others = pr.otherApprovers;
         const label = others.length === 1 ? others[0] : others[0] + ' +' + (others.length - 1);
         h += '<span class="pull-approved-others" title="Approved by ' + esc(others.join(', ')) + '">✓ ' + esc(label) + '</span>';
+      }
+      // Size of the PR at a glance: additions first, then deletions, to the left of the
+      // branch name. The route supplies the counts when the cached diffstat is ready;
+      // null renders nothing and the background fill shows on the next load.
+      if (pr.additions != null) {
+        h += '<span class="pull-stat" title="Lines added and lines removed">'
+          + '<span class="additions">+' + pr.additions + '</span>'
+          + '<span class="deletions">-' + pr.deletions + '</span>'
+          + '</span>';
       }
       if (pr.headRef) h += '<span class="pull-branch" title="' + esc(pr.headRef) + '">' + esc(pr.headRef) + '</span>';
       return h;
