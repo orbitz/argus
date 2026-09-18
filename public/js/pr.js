@@ -1376,6 +1376,9 @@
           hash: '#file-' + fileId,
           haystack: path.toLowerCase(),
           reviewed: isItemReviewed(el),
+          // Rendered onto every .diff-file by diff-renderer.ts, so this is free
+          additions: parseInt(el.dataset.additions, 10) || 0,
+          deletions: parseInt(el.dataset.deletions, 10) || 0,
         };
       }).filter(Boolean);
     }
@@ -1420,7 +1423,13 @@
         const icon = item.reviewed
           ? '<span class="goto-file-status reviewed" title="Reviewed">✓</span>'
           : '<span class="goto-file-status" title="Not reviewed">○</span>';
-        li.innerHTML = '<span class="goto-file-name">' + nameHtml + '</span>' + icon;
+        // Size at a glance so big files can be picked out for review. Commits carry no
+        // per-commit stats in the DOM (the GitHub list-commits API has none), so they get a dash.
+        const stats = item.kind === 'file'
+          ? '<span class="goto-file-stats"><span class="goto-stat-add">+' + item.additions +
+            '</span> <span class="goto-stat-del">-' + item.deletions + '</span></span>'
+          : '<span class="goto-file-stats goto-stats-na">—</span>';
+        li.innerHTML = '<span class="goto-file-name">' + nameHtml + '</span>' + stats + icon;
         li.addEventListener('click', () => navigateToItem(item));
         resultsList.appendChild(li);
       });

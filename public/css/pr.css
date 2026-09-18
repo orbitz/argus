@@ -330,8 +330,13 @@
   border-radius: var(--radius);
   background: var(--card);
   box-shadow: var(--shadow-card);
-  /* The file header tints the top edge, so it has to be clipped to the radius. */
+  /* The file header tints the top edge, so it has to be clipped to the radius.
+     clip rather than hidden: a hidden ancestor is the nearest scroll container,
+     which would pin the sticky file header to a box that never scrolls. clip
+     clips without creating one, so the header keeps sticking to the viewport.
+     hidden stays first as the fallback for browsers without clip support. */
   overflow: hidden;
+  overflow: clip;
 }
 
 .file-header {
@@ -837,6 +842,38 @@ a.file-deep-link:hover { text-decoration: underline; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* +N −M per file, right-aligned into a fixed-width column so the numbers line up across
+   rows and size differences read at a glance. */
+.goto-file-stats {
+  flex-shrink: 0;
+  min-width: 6em;
+  text-align: right;
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.goto-file-stats .goto-stat-add {
+  color: var(--success);
+}
+
+.goto-file-stats .goto-stat-del {
+  color: var(--danger);
+}
+
+.goto-file-stats.goto-stats-na {
+  color: var(--fg-subtle);
+}
+
+.goto-file-result.selected .goto-file-stats .goto-stat-add,
+.goto-file-result.selected .goto-file-stats .goto-stat-del {
+  color: rgba(255, 255, 255, 0.85);
+}
+
+.goto-file-result.selected .goto-file-stats.goto-stats-na {
+  color: rgba(255, 255, 255, 0.6);
 }
 
 .goto-file-status {

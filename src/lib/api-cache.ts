@@ -212,6 +212,21 @@ export function isRevalidating(cacheKey: string): boolean {
   return inflight.has(cacheKey);
 }
 
+/**
+ * Read a cached value synchronously, expiry ignored. Null when absent or corrupt. The
+ * pulls list uses this to show a PR diffstat it already computed without ever blocking
+ * on the network; a miss is filled in by a background fetch for the next load.
+ */
+export function readCached<T>(cacheKey: string): T | null {
+  const row = readRow(cacheKey);
+  if (!row) return null;
+  try {
+    return JSON.parse(row.data) as T;
+  } catch {
+    return null;
+  }
+}
+
 /** When the key was last confirmed against GitHub, or null if not cached. */
 export function getFetchedAt(cacheKey: string): Date | null {
   const row = readRow(cacheKey);
@@ -272,4 +287,9 @@ export const TTL = {
   // Issue titles referenced from commit messages. A title changes about as often as a
   // PR's own, so it shares the general TTL rather than the fast-moving checks one.
   issue: config.cacheTtl * 1000,
+  // Per-PR +/- line counts. The cache key pins the head and base SHA, so a push or a
+  // retarget produces a new key and a fresh value. Within one key the only way the
+  // counts move is the base branch advancing, which the TTL's background revalidation
+  // picks up.
+  diffstat: config.cacheTtl * 1000,
 } as const;

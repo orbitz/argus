@@ -32,6 +32,8 @@ const pull = (number: number) => ({
   sameRepo: true,
   approved: false,
   otherApprovers: [] as string[],
+  additions: 12 as number | null,
+  deletions: 3 as number | null,
 });
 
 function render(over: Record<string, unknown>) {
@@ -85,5 +87,33 @@ describe('the repository pull-request list', () => {
     const doc = render({ standalone: [], shown: 0 });
     expect(doc.querySelector('.empty-state')).not.toBeNull();
     expect(doc.querySelector('.pulls-truncated')).toBeNull();
+  });
+
+  it('shows additions and deletions between the branch name and the author', () => {
+    const doc = render({});
+    const stat = doc.querySelector('.pull-stat');
+    expect(stat).not.toBeNull();
+    expect(stat!.querySelector('.additions')!.textContent).toBe('+12');
+    expect(stat!.querySelector('.deletions')!.textContent).toBe('-3');
+    // Order on the row: the stat sits left of the branch name, which sits left of the
+    // author. Compare positions rather than markup, so styling can move freely.
+    const row = stat!.closest('.pull-row')!;
+    const children = [...row.children];
+    expect(children.indexOf(doc.querySelector('.pull-branch')!)).toBeGreaterThan(children.indexOf(stat!));
+    expect(children.indexOf(doc.querySelector('.pull-author')!)).toBeGreaterThan(children.indexOf(doc.querySelector('.pull-branch')!));
+  });
+
+  it('shows no diffstat while the background count is still pending', () => {
+    const doc = render({ standalone: [{ ...pull(1), additions: null, deletions: null }] });
+    expect(doc.querySelector('.pull-stat')).toBeNull();
+    expect(doc.querySelector('.pull-branch')).not.toBeNull();
+  });
+
+  it('shows the diffstat on stacked rows too', () => {
+    const doc = render({
+      stacks: [{ base: 'main', nodes: [{ pr: pull(1), isRoot: true, isTip: true, cells: ['node'] }] }],
+      standalone: [],
+    });
+    expect(doc.querySelector('.stack .pull-stat .additions')!.textContent).toBe('+12');
   });
 });

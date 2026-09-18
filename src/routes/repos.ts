@@ -1,6 +1,13 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import { requireAuth } from '../middleware/auth.js';
-import { createUserOctokit, fetchReviews, getApprovers } from '../lib/github.js';
+import {
+  createUserOctokit,
+  fetchReviews,
+  fetchPullDiffstat,
+  getApprovers,
+  readPullDiffstatCache,
+  type PullDiffstat,
+} from '../lib/github.js';
 import { buildStacks } from '../lib/stacks.js';
 import { config } from '../config.js';
 import { collectCapped } from '../lib/paginate.js';
@@ -92,6 +99,9 @@ export async function repoRoutes(fastify: FastifyInstance) {
         );
 
         const login = request.user!.login;
+        // Approval lookups and diffstat lookups share one batch size: both are one
+        // GitHub request per pull request, so both must be batched the same way.
+        const batchSize = Math.max(1, config.pulls.reviewConcurrency);
 
         // Approval state per PR. Failures (e.g. permissions) degrade to "not approved".
         // Batched rather than one Promise.all over the whole list: at the old cap of 50
@@ -99,7 +109,6 @@ export async function repoRoutes(fastify: FastifyInstance) {
         // simultaneous requests is exactly what GitHub's secondary rate limit exists to
         // refuse. Every response is cached, so only a cold list pays the full cost.
         const approvals: Array<{ approved: boolean; otherApprovers: string[] }> = [];
-        const batchSize = Math.max(1, config.pulls.reviewConcurrency);
         for (let i = 0; i < pulls.length; i += batchSize) {
           const batch = pulls.slice(i, i + batchSize);
           approvals.push(
@@ -122,6 +131,31 @@ export async function repoRoutes(fastify: FastifyInstance) {
           );
         }
 
+        // Size of each PR at a glance. The cache key pins the head and base SHA, so a
+        // push or a retarget is a miss. A miss renders without the counts and starts a
+        // batched background fetch that stores them for the next load — the list page
+        // itself never waits on the network for a diffstat.
+        const diffstats: Array<PullDiffstat | null> = pulls.map((pr) =>
+          readPullDiffstatCache(owner, repo, pr.number, pr.head.sha, pr.base.sha)
+        );
+        const missingStats = pulls.filter((_, i) => diffstats[i] === null);
+        if (missingStats.length > 0) {
+          void (async () => {
+            for (let i = 0; i < missingStats.length; i += batchSize) {
+              await Promise.all(
+                missingStats.slice(i, i + batchSize).map((pr) =>
+                  fetchPullDiffstat(octokit, owner, repo, pr.number, pr.head.sha, pr.base.sha).catch(
+                    (err: any) =>
+                      console.error(`Failed to fetch diffstat for PR #${pr.number}:`, err.status, err.message)
+                  )
+                )
+              );
+            }
+          })().catch(() => {
+            // The page is already sent; a background failure must not crash the process.
+          });
+        }
+
         const enrichedPulls = pulls.map((pr, i) => ({
           number: pr.number,
           title: pr.title,
@@ -140,6 +174,8 @@ export async function repoRoutes(fastify: FastifyInstance) {
           sameRepo: pr.head.repo?.full_name === pr.base.repo?.full_name,
           approved: approvals[i].approved,
           otherApprovers: approvals[i].otherApprovers,
+          additions: diffstats[i]?.additions ?? null,
+          deletions: diffstats[i]?.deletions ?? null,
         }));
 
         // Group into stacks (chains/trees linked by base<-head branch) + standalone PRs.
