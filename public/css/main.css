@@ -384,7 +384,6 @@ summary:hover { text-decoration: underline; }
    These rules are deliberately low-specificity, so a page that needs something
    different can still override them. */
 .item,
-.pull-item,
 .repo-item,
 .notification-item,
 .pr-item {
@@ -397,7 +396,6 @@ summary:hover { text-decoration: underline; }
 }
 
 .item:hover,
-.pull-item:hover,
 .repo-item:hover,
 .notification-item:hover,
 .pr-item:hover {
@@ -405,7 +403,6 @@ summary:hover { text-decoration: underline; }
 }
 
 .item:last-child,
-.pull-item:last-child,
 .repo-item:last-child,
 .notification-item:last-child,
 .pr-item:last-child {
@@ -428,8 +425,7 @@ summary:hover { text-decoration: underline; }
    — outlines everywhere read as noise and stop meaning anything. */
 .card,
 .item-list,
-.repos-list,
-.pulls-list {
+.repos-list {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -455,8 +451,7 @@ summary:hover { text-decoration: underline; }
 /* Rows are flush inside a card: the card supplies the edge, so a row that also
    rounded its own corners would produce a visible double border on hover. */
 .item-list > .item,
-.repos-list > .repo-item,
-.pulls-list > .pull-item {
+.repos-list > .repo-item {
   border-radius: 0;
   padding-left: var(--space-3);
   padding-right: var(--space-3);

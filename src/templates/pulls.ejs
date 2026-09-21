@@ -51,9 +51,11 @@
     .pulls-search-count { color: var(--fg-muted); font-size: 0.85rem; white-space: nowrap; }
 
     /* The rail draws the shape of a stack. A filtered stack is no longer that shape, so
-       it is not drawn while a query is active. */
+       no rail is drawn while a query is active. The lone dots of the standalone rows go
+       with it, so both sections indent alike; draft and approval state are also written
+       in the row itself, so nothing is lost. */
     .pulls-page.is-searching .rail { display: none; }
-    .pulls-page.is-searching .stack-node-row .pull-row { padding-left: 0.5rem; }
+    .pulls-page.is-searching .pull-item-row .pull-row { padding-left: 0.5rem; }
 
     .pulls-header { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
     .pulls-header h1 { font-size: 1.25rem; margin: 0; }
@@ -69,11 +71,12 @@
     .section-heading:first-of-type { margin-top: 0.25rem; }
 
     .pulls-list { margin: 0; padding: 0; list-style: none; }
-    .pull-item { position: relative; border-bottom: 1px solid var(--border-subtle); }
+    .pull-item { border-bottom: 1px solid var(--border-subtle); }
     .pull-item:last-child { border-bottom: none; }
 
     /* The PR link stretches over the whole row, so a click anywhere opens it here.
-       The GitHub icon is a real link of its own and sits above that overlay. */
+       It sits on .pull-item-row, outside .pull-row, in both sections. The GitHub icon
+       is a real link of its own and sits above it. */
     .pull-link { position: absolute; inset: 0; }
 
     /* One fixed column per field, so the eye can scan straight down the list. The
@@ -94,10 +97,7 @@
         9em;        /* author */
       column-gap: 0.75rem;
       align-items: baseline;
-      padding: 0.625rem 0;
     }
-    .pull-item:hover { background: var(--surface); }
-    .pull-item:hover .pull-title { color: var(--accent); }
     .pull-number { grid-column: 1; color: var(--fg-muted); font-size: 0.9rem; }
     .pull-title {
       grid-column: 2; color: var(--fg); min-width: 0;
@@ -145,19 +145,27 @@
       padding: 0.1rem 0.4rem; border: 1px solid #cdd5dd; border-radius: 999px;
     }
 
-    /* --- Stacked-PR rail (git-log style) --- */
+    /* --- Rail (git-log style) ---------------------------------------------------
+       The rail draws how a stack sits on top of itself. The standalone rows reuse one
+       cell of it, a bare node dot, so the two sections read as one list. */
     .stack { margin-bottom: 1rem; }
     .stack-cap { color: var(--fg-subtle); font-size: 0.8rem; padding: 0 0 0.15rem 0.5rem; }
     .stack-nodes { list-style: none; margin: 0; padding: 0; }
-    .stack-node { border-bottom: 1px solid #f2f2f2; }
+    .stack-node { border-bottom: 1px solid var(--border-subtle); }
     .stack-node:last-child { border-bottom: none; }
 
-    .stack-node-row { display: flex; align-items: stretch; position: relative; }
-    .stack-node-row:hover { background: var(--surface); }
-    .stack-node-row:hover .pull-title { color: var(--accent); }
-    .stack-node-row .pull-row { flex: 1; align-items: center; padding: 0.5rem 0.5rem 0.5rem 0; }
-    /* Same stretched overlay as .pull-link, for the rail rows. */
-    .stack-node-link { position: absolute; inset: 0; }
+    /* One row shape for both sections: an optional rail cell, then the field grid. The
+       stretched overlay link lives here, so the hover highlight covers the rail too. */
+    .pull-item-row {
+      display: flex; align-items: stretch; position: relative;
+      transition: background-color 0.08s ease-in-out;
+    }
+    .pull-item-row:hover { background: var(--surface); }
+    .pull-item-row:hover .pull-title { color: var(--accent); }
+    /* Same height, alignment, and right inset in both sections. Horizontal padding, not
+       0: the hover highlight must not touch the text. Left padding is 0 because the rail
+       cell already holds that space. */
+    .pull-item-row .pull-row { flex: 1; padding: 0.625rem 0.5rem 0.625rem 0; }
 
     .rail { display: flex; align-items: stretch; flex: 0 0 auto; }
     .rail-cell { position: relative; width: 22px; flex: 0 0 22px; }
@@ -192,10 +200,11 @@
     /* Node dot (white halo masks the line passing behind it) */
     .dot {
       position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
-      border-radius: 50%; background: var(--fg-muted); box-shadow: 0 0 0 3px #fff;
+      /* The halo masks the line passing behind the dot, so it must match the page. */
+      border-radius: 50%; background: var(--fg-muted); box-shadow: 0 0 0 3px var(--card);
     }
     .is-approved .dot { background: var(--success); }
-    .is-draft .dot { background: #fff; border: 2px solid var(--fg-subtle); }
+    .is-draft .dot { background: var(--card); border: 2px solid var(--fg-subtle); }
     .is-draft.is-approved .dot { border-color: var(--success); }
 
     .empty-state { color: var(--fg-muted); text-align: center; padding: 3rem; }
@@ -210,14 +219,13 @@
       .pull-stat { display: inline-flex; gap: 0.45rem; }
       .pull-title { flex: 1; }
       .pull-branch { max-width: 16ch; }
-      .stack-node-row .pull-row { flex-wrap: nowrap; }
     }
 
     @media (max-width: 480px) {
       .pulls-page { padding: 0.5rem; }
       .pulls-header h1 { font-size: 1rem; }
       .filter-link { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
-      .pull-row { padding: 0.5rem 0; }
+      .pull-item-row .pull-row { padding: 0.5rem 0; }
       .pull-title { font-size: 0.9rem; }
       .pull-author { font-size: 0.8rem; }
       .rail-cell { width: 16px; flex-basis: 16px; }
@@ -290,10 +298,21 @@
         + '<path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>'
         + '</svg></a>';
     }
-    // The PR link stretches over the whole row (see .pull-link / .stack-node-link), so
+    // The PR link stretches over the whole row (see .pull-link), so
     // it is an empty anchor; the icon carries the accessible name for this row instead.
     function prLink(owner, repo, pr, cls) {
       return '<a href="/pr/' + esc(owner) + '/' + esc(repo) + '/' + pr.number + '" class="' + cls + '"></a>';
+    }
+    // The cell that carries the dot. A stack row keeps line stubs above or below unless
+    // it is the root or the tip; a standalone row is both, so it renders a lone dot.
+    // Draft and approval state color the dot the same way in both sections.
+    function railNodeCell(node, pr) {
+      let cls = 'rail-cell rail-node';
+      if (node.isRoot) cls += ' no-top';
+      if (node.isTip) cls += ' no-bottom';
+      if (pr.draft) cls += ' is-draft';
+      if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) cls += ' is-approved';
+      return cls;
     }
   %>
 
@@ -345,21 +364,15 @@
           <ul class="stack-nodes">
             <% stack.nodes.forEach(node => { const pr = node.pr; %>
               <li class="stack-node js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-                <div class="stack-node-row">
+                <div class="pull-item-row">
                   <span class="rail">
                     <% node.cells.forEach((cell, idx) => {
                          const isNodeCell = idx === node.cells.length - 1;
-                         let cls = 'rail-cell rail-' + cell;
-                         if (isNodeCell) {
-                           if (node.isRoot) cls += ' no-top';
-                           if (node.isTip) cls += ' no-bottom';
-                           if (pr.draft) cls += ' is-draft';
-                           if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) cls += ' is-approved';
-                         }
+                         const cls = isNodeCell ? railNodeCell(node, pr) : 'rail-cell rail-' + cell;
                     %><span class="<%= cls %>"><% if (isNodeCell) { %><span class="dot"></span><% } %></span><% }); %>
                   </span>
                   <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
-                  <%- prLink(owner, repo, pr, 'stack-node-link') %>
+                  <%- prLink(owner, repo, pr, 'pull-link') %>
                 </div>
               </li>
             <% }); %>
@@ -375,7 +388,11 @@
       <ul class="pulls-list">
         <% standalone.forEach(pr => { %>
           <li class="pull-item js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-            <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %><%- prLink(owner, repo, pr, 'pull-link') %></div>
+            <div class="pull-item-row">
+              <span class="rail"><span class="<%= railNodeCell({ isRoot: true, isTip: true }, pr) %>"><span class="dot"></span></span></span>
+              <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
+              <%- prLink(owner, repo, pr, 'pull-link') %>
+            </div>
           </li>
         <% }); %>
       </ul>
