@@ -27,6 +27,7 @@ import {
   fetchFileBuffer,
 } from '../lib/github.js';
 import { invalidateCache, prCacheKeys, getFetchedAt, type CacheMode } from '../lib/api-cache.js';
+import { summarizeChecks } from '../lib/checks.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
 import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
@@ -1942,63 +1943,6 @@ function mergeReadiness(pr: any, checks: any[], pendingWorkflowCount = 0): {
     default:
       return { state: 'unknown', blocked: false, label: 'Merge state unknown', detail: 'GitHub is still computing whether this can merge.' };
   }
-}
-
-// Helper to summarize checks status
-function summarizeChecks(
-  checks: any[],
-  combinedStatus: { state: string; statuses: any[] }
-): {
-  total: number;
-  passed: number;
-  failed: number;
-  pending: number;
-  state: string;
-} {
-  let passed = 0;
-  let failed = 0;
-  let pending = 0;
-
-  // Count check runs
-  for (const check of checks) {
-    if (check.status === 'completed') {
-      if (check.conclusion === 'success' || check.conclusion === 'skipped') {
-        passed++;
-      } else if (
-        check.conclusion === 'failure' ||
-        check.conclusion === 'cancelled' ||
-        check.conclusion === 'timed_out'
-      ) {
-        failed++;
-      } else {
-        pending++;
-      }
-    } else {
-      pending++;
-    }
-  }
-
-  // Count statuses
-  for (const status of combinedStatus.statuses) {
-    if (status.state === 'success') {
-      passed++;
-    } else if (status.state === 'failure' || status.state === 'error') {
-      failed++;
-    } else {
-      pending++;
-    }
-  }
-
-  const total = passed + failed + pending;
-
-  let state = 'success';
-  if (failed > 0) {
-    state = 'failure';
-  } else if (pending > 0) {
-    state = 'pending';
-  }
-
-  return { total, passed, failed, pending, state };
 }
 
 // Save PR revision for force push tracking

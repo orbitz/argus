@@ -207,6 +207,20 @@
     .is-draft .dot { background: var(--card); border: 2px solid var(--fg-subtle); }
     .is-draft.is-approved .dot { border-color: var(--success); }
 
+    /* Check state on the same dot. Passed reads green like approved — both mean
+       "nothing blocks this PR". Pending checks change nothing: a resting dot is
+       indistinguishable from a pending one, and an uncomputed row fills in on a
+       later load. */
+    .is-checks-passed .dot { background: var(--success); }
+    .is-draft.is-checks-passed .dot { background: var(--card); border-color: var(--success); }
+    .is-checks-failed .dot { background: var(--danger); }
+    .is-draft.is-checks-failed .dot { background: var(--card); border-color: var(--danger); }
+    /* Approved but failing: the green fill stands, a ring marks the failure. */
+    .is-approved.is-checks-failed .dot {
+      background: var(--success);
+      box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--danger);
+    }
+
     .empty-state { color: var(--fg-muted); text-align: center; padding: 3rem; }
 
     /* Responsive */
@@ -305,15 +319,30 @@
     }
     // The cell that carries the dot. A stack row keeps line stubs above or below unless
     // it is the root or the tip; a standalone row is both, so it renders a lone dot.
-    // Draft and approval state color the dot the same way in both sections.
+    // Draft, approval, and check state color the dot the same way in both sections.
     function railNodeCell(node, pr) {
       let cls = 'rail-cell rail-node';
       if (node.isRoot) cls += ' no-top';
       if (node.isTip) cls += ' no-bottom';
       if (pr.draft) cls += ' is-draft';
       if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) cls += ' is-approved';
+      if (pr.checks && pr.checks.state === 'passed') cls += ' is-checks-passed';
+      if (pr.checks && pr.checks.state === 'failed') cls += ' is-checks-failed';
       return cls;
     }
+    // What the dot encodes, as hover text. Check state only when it is known — an
+    // uncomputed row shows a bare dot until a background pass fills it in.
+    function dotTitle(pr) {
+      const parts = [];
+      if (pr.draft) parts.push('Draft');
+      if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) parts.push('Approved');
+      if (pr.checks) {
+        if (pr.checks.state === 'passed') parts.push('All ' + pr.checks.total + ' checks passed');
+        else if (pr.checks.state === 'failed') parts.push(pr.checks.failed + ' of ' + pr.checks.total + ' checks failed');
+        else parts.push('Checks running');
+      }
+      return parts.join(' \u00b7 ');
+ }
   %>
 
   <main class="pulls-page">
@@ -369,7 +398,7 @@
                     <% node.cells.forEach((cell, idx) => {
                          const isNodeCell = idx === node.cells.length - 1;
                          const cls = isNodeCell ? railNodeCell(node, pr) : 'rail-cell rail-' + cell;
-                    %><span class="<%= cls %>"><% if (isNodeCell) { %><span class="dot"></span><% } %></span><% }); %>
+                    %><span class="<%= cls %>"><% if (isNodeCell) { const dotTip = dotTitle(pr); %><span class="dot"<%- dotTip ? ' title="' + esc(dotTip) + '"' : '' %>></span><% } %></span><% }); %>
                   </span>
                   <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
                   <%- prLink(owner, repo, pr, 'pull-link') %>
@@ -389,7 +418,8 @@
         <% standalone.forEach(pr => { %>
           <li class="pull-item js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
             <div class="pull-item-row">
-              <span class="rail"><span class="<%= railNodeCell({ isRoot: true, isTip: true }, pr) %>"><span class="dot"></span></span></span>
+              <% const dotTip = dotTitle(pr); %>
+              <span class="rail"><span class="<%= railNodeCell({ isRoot: true, isTip: true }, pr) %>"><span class="dot"<%- dotTip ? ' title="' + esc(dotTip) + '"' : '' %>></span></span></span>
               <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
               <%- prLink(owner, repo, pr, 'pull-link') %>
             </div>
