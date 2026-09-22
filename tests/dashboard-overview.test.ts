@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   toOverviewPull,
+  toOverviewMention,
   unbucketedMineCount,
   myTeamSlugs,
   reviewRequestReason,
@@ -49,8 +50,25 @@ describe('toOverviewPull', () => {
       reviewCount: 1,
       commentCount: 4,
       reviewDecision: 'REVIEW_REQUIRED',
+      checks: null,
       headSha: 'abc123',
     });
+  });
+
+  it('maps the GraphQL check rollup to the three dot states', () => {
+    const roll = (state: string, total = 4) => ({
+      statusCheckRollup: { state, contexts: { totalCount: total } },
+    });
+    expect(toOverviewPull(node(roll('SUCCESS')))!.checks).toEqual({ state: 'passed', total: 4 });
+    expect(toOverviewPull(node(roll('FAILURE')))!.checks!.state).toBe('failed');
+    expect(toOverviewPull(node(roll('ERROR')))!.checks!.state).toBe('failed');
+    expect(toOverviewPull(node(roll('PENDING')))!.checks!.state).toBe('pending');
+  });
+
+  it('reports no checks when GitHub returns no rollup', () => {
+    // A missing rollup means GitHub counted nothing, not that the checks passed.
+    expect(toOverviewPull(node())!.checks).toBeNull();
+    expect(toOverviewPull(node({ statusCheckRollup: null }))!.checks).toBeNull();
   });
 
   it('identifies bot authors by actor type, not by login', () => {
@@ -84,6 +102,55 @@ describe('toOverviewPull', () => {
     expect(pull.changedFiles).toBe(0);
     expect(pull.reviewCount).toBe(0);
     expect(pull.reviewDecision).toBeNull();
+  });
+});
+
+describe('toOverviewMention', () => {
+  it('carries the diff and status fields for a mentioned pull request', () => {
+    const item = toOverviewMention({
+      __typename: 'PullRequest',
+      number: 7,
+      title: 'Mentioned',
+      updatedAt: '2026-08-02T00:00:00Z',
+      author: { login: 'bob' },
+      repository: { nameWithOwner: 'octocat/hello-world' },
+      isDraft: true,
+      changedFiles: 2,
+      additions: 10,
+      deletions: 1,
+      reviewDecision: 'APPROVED',
+      statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 3 } },
+    })!;
+    expect(item.isPullRequest).toBe(true);
+    expect(item.draft).toBe(true);
+    expect(item.changedFiles).toBe(2);
+    expect(item.additions).toBe(10);
+    expect(item.deletions).toBe(1);
+    expect(item.reviewDecision).toBe('APPROVED');
+    expect(item.checks).toEqual({ state: 'passed', total: 3 });
+  });
+
+  it('leaves the status fields null on an issue', () => {
+    // The Issue fragment selects none of them, so the row shows no dot and no diffstat.
+    const item = toOverviewMention({
+      __typename: 'Issue',
+      number: 9,
+      title: 'Mentioned issue',
+      updatedAt: '2026-08-02T00:00:00Z',
+      author: { login: 'bob' },
+      repository: { nameWithOwner: 'octocat/hello-world' },
+    })!;
+    expect(item.isPullRequest).toBe(false);
+    expect(item.draft).toBeNull();
+    expect(item.changedFiles).toBeNull();
+    expect(item.additions).toBeNull();
+    expect(item.reviewDecision).toBeNull();
+    expect(item.checks).toBeNull();
+  });
+
+  it('returns null for a node without a number', () => {
+    expect(toOverviewMention(null)).toBeNull();
+    expect(toOverviewMention({})).toBeNull();
   });
 });
 

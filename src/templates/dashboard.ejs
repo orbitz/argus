@@ -9,7 +9,9 @@
   <%- include('partials/pwa') %>
   <link rel="stylesheet" href="/static/css/main.css">
   <style>
-    .dashboard { max-width: 1000px; margin: 0 auto; padding: 1rem; }
+    /* As wide as the pulls list, so a row's columns get the screen instead of the
+       margins. The title cell is the only flexible one, so the extra width lands there. */
+    .dashboard { max-width: 1280px; margin: 0 auto; padding: 1rem; }
 
     .dashboard-header {
       display: flex; justify-content: space-between; align-items: center;
@@ -38,27 +40,110 @@
     .group-title.ready { color: var(--success); }
 
     .item-list { margin: 0; padding: 0; list-style: none; }
-    .item {
-      display: flex; gap: 0.6rem; align-items: baseline;
-      padding: 0.45rem 0.25rem; border-bottom: 1px solid var(--border-subtle);
-    }
+    /* One row shape for every list on this page, same idea as the pulls list: a status
+       dot, then a fixed grid so the numbers line up down the column. The repository
+       column takes the place a single-repo list gives its branch, because this page
+       spans repositories. */
+    .item { border-bottom: 1px solid var(--border-subtle); }
     .item:last-child { border-bottom: none; }
-    .item-number { color: var(--fg-muted); font-size: 0.85rem; font-variant-numeric: tabular-nums; }
-    .item-main { flex: 1; min-width: 0; }
-    .item-title { color: var(--fg); text-decoration: none; font-weight: 500; }
-    .item-title:hover { color: var(--accent); text-decoration: underline; }
-    .item-sub { display: block; color: var(--fg-muted); font-size: 0.8rem; margin-top: 0.1rem; }
-    .item-repo { color: var(--fg-muted); text-decoration: none; }
-    .item-repo:hover { text-decoration: underline; }
+    .pull-item-row {
+      display: flex; align-items: stretch;
+      transition: background-color 0.08s ease-in-out;
+    }
+    .pull-item-row:hover { background: var(--surface); }
+    .pull-item-row:hover .pull-title a { color: var(--accent); }
+
+    .rail-cell { position: relative; flex: 0 0 22px; width: 22px; }
+
+    .pull-row {
+      flex: 1; min-width: 0;
+      display: grid;
+      grid-template-columns:
+        4em                /* number */
+        minmax(0, 1fr)     /* title, with draft and status badges inline */
+        4.5ch              /* additions */
+        4.5ch              /* deletions */
+        minmax(9ch, 18ch)  /* repository */
+        1.5em              /* link out to github.com */
+        8em                /* author */
+        5em;               /* age */
+      column-gap: 0.6rem;
+      align-items: baseline;
+      padding: 0.45rem 0.25rem;
+    }
+    /* Every cell names its own column, so a row without a cell (a PR with no diff, an
+       issue) leaves a gap in place instead of shifting the columns after it. */
+    .pull-number {
+      grid-column: 1; color: var(--fg-muted); font-size: 0.85rem;
+      font-variant-numeric: tabular-nums;
+    }
+    .pull-title {
+      grid-column: 2; min-width: 0;
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem;
+    }
+    .pull-title a { color: var(--fg); text-decoration: none; font-weight: 500; }
+    .pull-title a:hover { color: var(--accent); text-decoration: underline; }
+    /* The wrapper has no box; its two spans become grid columns 3 and 4. */
+    .pull-stat { display: contents; }
+    .pull-stat .additions,
+    .pull-stat .deletions {
+      font-size: 0.8rem; white-space: nowrap;
+      font-variant-numeric: tabular-nums; text-align: right;
+    }
+    .pull-stat .additions { grid-column: 3; }
+    .pull-stat .deletions { grid-column: 4; }
+    .pull-repo {
+      grid-column: 5; color: var(--fg-muted); font-size: 0.8rem;
+      text-decoration: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pull-repo:hover { color: var(--accent); text-decoration: underline; }
+    /* No stretched overlay link on this page, so the icon needs no z-index. It keeps the
+       baseline alignment of the grid, which pins it to the first line even when the row
+       wraps — the same line the dot sits on. */
+    .pull-external {
+      grid-column: 6;
+      display: inline-flex; color: var(--fg-subtle); text-decoration: none;
+    }
+    .pull-external:hover { color: var(--accent); }
+    .pull-author {
+      grid-column: 7; color: var(--fg-subtle); font-size: 0.85rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pull-age { grid-column: 8; color: var(--fg-muted); font-size: 0.8rem; white-space: nowrap; }
+
+    /* The dot, as on the pulls list: green when nothing blocks the pull request, red when
+       something does, hollow while it is a draft. Rules later in this block win, so the
+       review decision sits after the checks (requested changes with a green build is
+       still blocked) and the draft rules sit last (a draft stays hollow). */
+    /* The dot sits on the row's first line, not in the middle of the row: a row that
+       wraps would otherwise drag the dot down to the middle of text it does not belong
+       to. The offset is the row's top padding plus half of the first line's box
+       (14px font, 1.5 leading), which is where the title's first line is centered. */
+    .dot {
+      position: absolute; top: calc(0.45rem + 0.75rem); left: 50%;
+      width: 10px; height: 10px; margin: -5px 0 0 -5px;
+      border-radius: 50%; background: var(--fg-muted);
+    }
+    .is-checks-passed .dot { background: var(--success); }
+    .is-checks-failed .dot { background: var(--danger); }
+    .is-approved .dot { background: var(--success); }
+    /* Approved but failing: the green fill stands, a ring marks the failure. */
+    .is-approved.is-checks-failed .dot {
+      background: var(--success);
+      box-shadow: 0 0 0 3px var(--canvas), 0 0 0 5px var(--danger);
+    }
+    .is-changes-requested .dot { background: var(--danger); }
+    .is-draft .dot { background: var(--card); border: 2px solid var(--fg-subtle); }
+    .is-draft.is-approved .dot { border-color: var(--success); }
+    .is-draft.is-checks-passed .dot { background: var(--card); border-color: var(--success); }
+    .is-draft.is-checks-failed .dot { background: var(--card); border-color: var(--danger); }
+    .is-draft.is-changes-requested .dot { background: var(--card); border-color: var(--danger); }
 
     .badge {
       font-size: 0.75rem; white-space: nowrap; border-radius: 999px;
       padding: 0.05rem 0.45rem; border: 1px solid var(--border); color: var(--fg-muted);
     }
     .badge.draft { color: var(--warning); border-color: var(--warning-border); }
-    .badge.diff { font-variant-numeric: tabular-nums; }
-    .badge.add { color: var(--success); border: none; padding-right: 0; }
-    .badge.del { color: #a40e26; border: none; padding-left: 0.15rem; }
     .badge.progress { color: var(--accent); border-color: #b6d4f7; }
     /* Why a PR is waiting on you: named directly, or through a team. */
     .badge.asked-you { color: var(--accent-strong); border-color: #b6d4f7; background: var(--accent-subtle); font-weight: 600; }
@@ -81,7 +166,14 @@
 
     @media (max-width: 600px) {
       .dashboard { padding: 0.5rem; }
-      .item { flex-wrap: wrap; gap: 0.4rem; }
+      /* The fixed columns assume more room than a narrow screen has, so rows fall back
+         to wrapped flex here; the grid-column names are ignored in that layout. */
+      .pull-row { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.5rem 0.25rem; }
+      /* Follows the taller top padding of the wrapped layout. */
+      .dot { top: calc(0.5rem + 0.75rem); }
+      .pull-stat { display: inline-flex; gap: 0.45rem; }
+      .pull-title { flex: 1; }
+      .pull-repo { max-width: 100%; }
       .section-note { margin-left: 0; width: 100%; }
     }
   </style>
@@ -150,41 +242,105 @@
     </div>
 
     <%
-      // One row shape for every PR in every section: number, title, where it lives, who
-      // wrote it, how old, how big, and how far through it you are.
-      function renderPull(pr, opts) {
+      // The status dot's CSS classes. Green when nothing blocks the pull request, red when
+      // something does, hollow while it is a draft. The review decision and the checks both
+      // color it; the CSS decides which wins when they disagree.
+      function dotClass(item) {
+        let cls = 'rail-cell';
+        if (item.draft) cls += ' is-draft';
+        if (item.reviewDecision === 'APPROVED') cls += ' is-approved';
+        if (item.reviewDecision === 'CHANGES_REQUESTED') cls += ' is-changes-requested';
+        if (item.checks && item.checks.state === 'passed') cls += ' is-checks-passed';
+        if (item.checks && item.checks.state === 'failed') cls += ' is-checks-failed';
+        return cls;
+      }
+
+      // What the dot means, as hover text. Check text appears only when GitHub reported a
+      // rollup; a row without one shows a bare dot rather than a wrong claim.
+      function dotTitle(item) {
+        const parts = [];
+        if (item.draft) parts.push('Draft');
+        if (item.reviewDecision === 'APPROVED') parts.push('Approved');
+        if (item.reviewDecision === 'CHANGES_REQUESTED') parts.push('Changes requested');
+        if (item.checks) {
+          if (item.checks.state === 'passed') parts.push('All ' + item.checks.total + ' checks passed');
+          else if (item.checks.state === 'failed') parts.push('Checks failed');
+          else parts.push('Checks running');
+        }
+        return parts.join(' \u00b7 ');
+      }
+
+      // One row shape for every entry in every section: status dot, number, title with its
+      // badges, lines changed, repository, a link out to github.com, author, and age. Pull
+      // requests and mentions share it; an issue has no status and no diff, so its rail
+      // cell stays empty and it names itself with a badge instead.
+      function renderRow(item, opts) {
+        opts = opts || {};
+        const isIssue = item.isPullRequest === false;
+        // Argus renders pull requests. An issue stays on GitHub, which the proxy passes
+        // through untouched because it claims only pull-request paths.
+        const href = isIssue
+          ? `https://github.com/${item.fullName}/issues/${item.number}`
+          : `/pr/${item.owner}/${item.repo}/${item.number}`;
+        const dotTip = dotTitle(item);
     %>
-      <li class="item" data-title="<%= pr.title.toLowerCase() %> <%= pr.fullName.toLowerCase() %>">
-        <span class="item-number">#<%= pr.number %></span>
-        <span class="item-main">
-          <a class="item-title" href="/pr/<%= pr.owner %>/<%= pr.repo %>/<%= pr.number %>"><%= pr.title %></a>
-          <% if (pr.draft) { %> <span class="badge draft">draft</span><% } %>
-          <span class="item-sub">
-            <a class="item-repo" href="/repos/<%= pr.owner %>/<%= pr.repo %>/pulls"><%= pr.fullName %></a>
-            <% if (opts && opts.showAuthor) { %> · <%= pr.authorLogin %><% } %>
-            · <%= age(pr.updatedAt) %>
-            <% if (pr.reviewCount > 0) { %> · <%= pr.reviewCount %> review<%= pr.reviewCount === 1 ? '' : 's' %><% } %>
-          </span>
-        </span>
-        <% if (opts && opts.showRequestedFrom) { %>
-          <% if (pr.requestedFromYou) { %>
-            <span class="badge asked-you" title="Your review was requested directly">you</span>
+      <li class="item" data-title="<%= item.title.toLowerCase() %> <%= item.fullName.toLowerCase() %>">
+        <div class="pull-item-row">
+          <% if (isIssue) { %>
+            <span class="rail-cell"></span>
+          <% } else { %>
+            <span class="<%= dotClass(item) %>">
+              <span class="dot" title="<%= dotTip %>"></span>
+            </span>
           <% } %>
-          <% pr.requestedTeams.forEach(team => { %>
-            <span class="badge asked-team" title="Requested from the <%= team %> team, which you are on">@<%= team %></span>
-          <% }) %>
-          <% if (!pr.requestedFromYou && pr.requestedTeams.length === 0) { %>
-            <span class="badge asked-team" title="GitHub did not say which reviewer this request names">review requested</span>
-          <% } %>
-        <% } %>
-        <% if (pr.changedFiles > 0) { %>
-          <span class="badge diff" title="<%= pr.changedFiles %> files changed, +<%= pr.additions %> −<%= pr.deletions %>"><%= pr.changedFiles %>f</span>
-        <% } %>
-        <% if (typeof pr.reviewedFiles === 'number' && pr.changedFiles > 0 && pr.reviewedFiles > 0) {
-             const done = pr.reviewedFiles >= pr.changedFiles; %>
-          <span class="badge progress <%= done ? 'complete' : '' %>"
-                title="You have marked <%= pr.reviewedFiles %> of <%= pr.changedFiles %> files reviewed"><%= pr.reviewedFiles %>/<%= pr.changedFiles %></span>
-        <% } %>
+          <div class="pull-row">
+            <span class="pull-number">#<%= item.number %></span>
+            <span class="pull-title">
+              <a href="<%= href %>"<%- isIssue ? ' target="_blank" rel="noopener"' : '' %>><%= item.title %></a>
+              <% if (isIssue) { %><span class="badge" title="An issue, not a pull request">issue</span><% } %>
+              <% if (!isIssue && item.draft) { %><span class="badge draft">draft</span><% } %>
+              <% if (opts.showRequestedFrom) { %>
+                <% if (item.requestedFromYou) { %>
+                  <span class="badge asked-you" title="Your review was requested directly">you</span>
+                <% } %>
+                <% item.requestedTeams.forEach(team => { %>
+                  <span class="badge asked-team" title="Requested from the <%= team %> team, which you are on">@<%= team %></span>
+                <% }) %>
+                <% if (!item.requestedFromYou && item.requestedTeams.length === 0) { %>
+                  <span class="badge asked-team" title="GitHub did not say which reviewer this request names">review requested</span>
+                <% } %>
+              <% } %>
+              <% if (!isIssue && typeof item.reviewedFiles === 'number' && item.changedFiles > 0 && item.reviewedFiles > 0) {
+                   const done = item.reviewedFiles >= item.changedFiles; %>
+                <span class="badge progress <%= done ? 'complete' : '' %>"
+                      title="You have marked <%= item.reviewedFiles %> of <%= item.changedFiles %> files reviewed"><%= item.reviewedFiles %>/<%= item.changedFiles %></span>
+              <% } %>
+            </span>
+            <% if (item.changedFiles > 0) { %>
+              <span class="pull-stat">
+                <span class="additions" title="Lines added">+<%= item.additions %></span>
+                <span class="deletions" title="Lines removed">-<%= item.deletions %></span>
+              </span>
+            <% } %>
+            <a class="pull-repo" href="/repos/<%= item.owner %>/<%= item.repo %>/pulls" title="<%= item.fullName %>"><%= item.fullName %></a>
+            <%# Octicon link-external (octicons, MIT): the icon that says "this goes to
+                another site". An issue link stays on its title, which already leaves the
+                site, so the cell stays empty there. %>
+            <% if (!isIssue) { %>
+              <a class="pull-external"
+                 href="https://github.com/<%= item.owner %>/<%= item.repo %>/pull/<%= item.number %>"
+                 target="_blank" rel="noopener"
+                 title="Open on github.com"
+                 aria-label="Open pull request #<%= item.number %> on github.com">
+                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                  <path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>
+                </svg>
+              </a>
+            <% } %>
+            <span class="pull-author" title="<%= item.authorLogin %>"><%= item.authorLogin %></span>
+            <span class="pull-age"><%= age(item.updatedAt) %></span>
+          </div>
+        </div>
       </li>
     <% } %>
 
@@ -201,7 +357,7 @@
         <p class="empty-state">Nothing is waiting on you.</p>
       <% } else { %>
         <ul class="item-list">
-          <% waiting.humans.forEach(pr => { renderPull(pr, { showAuthor: true, showRequestedFrom: true }); }) %>
+          <% waiting.humans.forEach(pr => { renderRow(pr, { showRequestedFrom: true }); }) %>
         </ul>
         <% if (waiting.humans.length === 0) { %>
           <p class="empty-state">Only bot PRs are waiting on you.</p>
@@ -211,7 +367,7 @@
           <details class="bots">
             <summary><%= waiting.bots.length %> from bots (dependency bumps and the like)</summary>
             <ul class="item-list">
-              <% waiting.bots.forEach(pr => { renderPull(pr, { showAuthor: true, showRequestedFrom: true }); }) %>
+              <% waiting.bots.forEach(pr => { renderRow(pr, { showRequestedFrom: true }); }) %>
             </ul>
           </details>
         <% } %>
@@ -234,7 +390,7 @@
         <% if (mine.changesRequested.total > 0) { %>
           <div class="group-title blocked">Changes requested <span class="section-count"><%= mine.changesRequested.total %></span></div>
           <ul class="item-list">
-            <% mine.changesRequested.items.forEach(pr => { renderPull(pr, {}); }) %>
+            <% mine.changesRequested.items.forEach(pr => { renderRow(pr, {}); }) %>
           </ul>
           <% if (mine.changesRequested.total > mine.changesRequested.items.length) { %>
             <span class="section-note"><%= mine.changesRequested.total - mine.changesRequested.items.length %> more not shown</span>
@@ -244,7 +400,7 @@
         <% if (mine.approved.total > 0) { %>
           <div class="group-title ready">Approved <span class="section-count"><%= mine.approved.total %></span></div>
           <ul class="item-list">
-            <% mine.approved.items.forEach(pr => { renderPull(pr, {}); }) %>
+            <% mine.approved.items.forEach(pr => { renderRow(pr, {}); }) %>
           </ul>
           <% if (mine.approved.total > mine.approved.items.length) { %>
             <span class="section-note"><%= mine.approved.total - mine.approved.items.length %> more not shown</span>
@@ -254,7 +410,7 @@
         <% if (mine.awaiting.total > 0) { %>
           <div class="group-title">Awaiting review <span class="section-count"><%= mine.awaiting.total %></span></div>
           <ul class="item-list">
-            <% mine.awaiting.items.forEach(pr => { renderPull(pr, {}); }) %>
+            <% mine.awaiting.items.forEach(pr => { renderRow(pr, {}); }) %>
           </ul>
           <% if (mine.awaiting.total > mine.awaiting.items.length) { %>
             <span class="section-note">
@@ -280,25 +436,7 @@
         <p class="empty-state">Nobody has mentioned you in an open issue or PR.</p>
       <% } else { %>
         <ul class="item-list">
-          <% mentions.items.forEach(item => { %>
-            <li class="item" data-title="<%= item.title.toLowerCase() %> <%= item.fullName.toLowerCase() %>">
-              <span class="item-number">#<%= item.number %></span>
-              <span class="item-main">
-                <%
-                  // Argus renders PRs; issues stay on GitHub, which the proxy passes
-                  // through untouched since it only claims pull-request paths.
-                  const href = item.isPullRequest
-                    ? `/pr/${item.owner}/${item.repo}/${item.number}`
-                    : `https://github.com/${item.fullName}/issues/${item.number}`;
-                %>
-                <a class="item-title" href="<%= href %>"<%= item.isPullRequest ? '' : ' target="_blank" rel="noopener"' %>><%= item.title %></a>
-                <span class="item-sub">
-                  <%= item.fullName %> · <%= item.isPullRequest ? 'PR' : 'issue' %>
-                  by <%= item.authorLogin %> · <%= age(item.updatedAt) %>
-                </span>
-              </span>
-            </li>
-          <% }) %>
+          <% mentions.items.forEach(item => { renderRow(item, {}); }) %>
         </ul>
         <% if (mentions.total > mentions.items.length) { %>
           <span class="section-note"><%= mentions.total - mentions.items.length %> more not shown</span>
