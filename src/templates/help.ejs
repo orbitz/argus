@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title><%= title %></title>
+  <link rel="icon" type="image/svg+xml" href="/static/img/argus-dog.svg">
+  <link rel="icon" type="image/png" href="/static/img/favicon.png">
+  <%- include('partials/pwa') %>
+  <link rel="stylesheet" href="/static/css/main.css">
+  <style>
+    .help { max-width: 60rem; margin: 0 auto; padding: 1rem; }
+    .help-header { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
+    .help-header h1 { margin: 0; }
+    .help-text { margin: 0.75rem 0; font-size: 0.9rem; line-height: 1.5; color: var(--fg-muted); }
+    .help-hint { font-size: 0.85rem; color: var(--fg-muted); }
+    .help-label { display: block; margin-top: 1rem; font-size: 0.85rem; font-weight: 600; }
+
+    .bookmarklet-actions { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin-top: 0.75rem; }
+    .bookmarklet-field {
+      width: 100%;
+      box-sizing: border-box;
+      margin-top: 0.375rem;
+      padding: 0.5rem;
+      font: 0.8rem/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+      color: var(--fg);
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      resize: vertical;
+    }
+    .bookmarklet-field:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-surface); }
+
+    .help-table { width: 100%; border-collapse: collapse; margin-top: 0.5rem; font-size: 0.85rem; }
+    .help-table th { text-align: left; padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border); }
+    .help-table td { padding: 0.375rem 0.5rem; border-bottom: 1px solid var(--border-subtle); }
+    .help-table td:first-child { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--fg); }
+    .help-table td:last-child { color: var(--fg-muted); }
+    .help-table tr:last-child td { border-bottom: none; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <nav class="nav-container">
+      <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
+      <a href="/help" class="nav-help" title="Help">Help</a>
+      <% if (user) { %>
+        <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16a2 2 0 001.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 008 16zM3 5a5 5 0 0110 0v2.947c0 .05.015.098.042.139l1.703 2.555A1.519 1.519 0 0113.482 13H2.518a1.519 1.519 0 01-1.263-2.36l1.703-2.554A.255.255 0 003 7.947V5z"/></svg>
+          <span class="notification-badge hidden" id="notification-badge"></span>
+        </a>
+        <span class="nav-user"><%= user.login %></span>
+      <% } %>
+    </nav>
+  </header>
+
+  <main class="help">
+    <div class="help-header">
+      <h1>Help</h1>
+    </div>
+
+    <section class="card">
+      <div class="card-header">Bookmarklet: open a GitHub pull request in Argus</div>
+      <div class="card-body">
+        <p class="help-text">
+          Use the bookmarklet on a GitHub pull request page. Argus opens the same pull
+          request. It also works on a pull request list and on github.com itself.
+        </p>
+
+        <div class="bookmarklet-actions">
+          <a class="btn btn-primary bookmarklet-link" href="<%= bookmarklet %>" title="Drag it to the bookmarks bar">Open in Argus</a>
+          <span class="help-hint">Drag the button to the bookmarks bar, or copy the address below into a bookmark.</span>
+        </div>
+
+        <label class="help-label" for="bookmarklet-address">Bookmarklet address</label>
+        <textarea id="bookmarklet-address" class="bookmarklet-field" rows="3" readonly onfocus="this.select()"><%= bookmarklet %></textarea>
+
+        <p class="help-text">
+          In Firefox, press Ctrl+Shift+B to show the bookmarks bar, then drag the button
+          above onto it. To paste the address instead: press Ctrl+D on any page, find the
+          bookmark, right-click it, choose Edit…, and paste the address into Address.
+        </p>
+
+        <h2>What the bookmarklet opens</h2>
+        <table class="help-table">
+          <thead>
+            <tr><th>You are on</th><th>Argus opens</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>github.com/owner/repo/pull/42</td><td>The Conversation tab</td></tr>
+            <tr><td>github.com/owner/repo/pull/42/files</td><td>The Review tab</td></tr>
+            <tr><td>github.com/owner/repo/pull/42/commits</td><td>The Review tab</td></tr>
+            <tr><td>github.com/owner/repo/pull/42/checks</td><td>The Checks tab</td></tr>
+            <tr><td>github.com/owner/repo/pull/42/commits/&lt;sha&gt;</td><td>That commit alone</td></tr>
+            <tr><td>github.com/owner/repo/pulls</td><td>The pull request list</td></tr>
+            <tr><td>github.com/pulls</td><td>The dashboard</td></tr>
+          </tbody>
+        </table>
+
+        <p class="help-text">
+          On any other address, Argus reports that it has no view for that page. The same
+          mapping serves github.com when Argus runs as your github.com front end.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/js/notifications.js"></script>
+</body>
+</html>

@@ -16,6 +16,7 @@ This is a server-rendered alternative that loads pull requests immediately.
 - **Fast for large diffs** - Smart chunking and collapsible files. No waiting for the client to render thousands of lines.
 - **Control over updates** - Get notified when PRs change, reload when you're ready. No surprise reflows.
 - **Works with GitHub** - All comments, reviews, and merges sync through the GitHub API. Your workflow stays intact.
+- **Bookmarklet** - `/help` has a bookmarklet that opens the GitHub pull request you are on in Argus.
 
 ## Quick Start
 

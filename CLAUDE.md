@@ -108,6 +108,17 @@ HTML Response (with optional client-side JS enhancement)
 - Custom link renderer (opens in new tab)
 - Task list checkbox support
 
+**`src/routes/help.ts`** + **`src/lib/bookmarklet.ts`** - The help screen and its bookmarklet
+- `GET /help` renders the bookmarklet. Its origin comes from the request, honouring
+  `X-Forwarded-Proto` / `X-Forwarded-Host`, so the same string is right behind the github.com
+  proxy. Only characters a URL host may hold pass, because the origin ends up inside a
+  `javascript:` URL on the page
+- `GET /bookmarklet?url=` is where that bookmarklet sends the click. It maps the page URL
+  with `mapGitHubUrl` — the function the github.com compatibility routes call too — and
+  redirects. An address that maps nowhere bounces back to itself when it is already an
+  Argus address, and shows the "no view" error otherwise. Registered before
+  `githubCompatRoutes`
+
 ### Database Schema
 
 SQLite with WAL mode. Key tables:
@@ -189,6 +200,8 @@ EJS templates in `src/templates/`. Key templates:
   works without JavaScript
 - **layout.ejs** - Base HTML wrapper with common header/footer
 - **range-diff.ejs** - Force push comparison view
+- **help.ejs** - The help screen: the bookmarklet to drag to the bookmarks bar, the address
+  to paste into a bookmark instead, and the table of GitHub addresses it opens
 
 Templates receive data from route handlers and render server-side.
 

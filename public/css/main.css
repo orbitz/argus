@@ -138,6 +138,15 @@ code, pre {
 }
 .nav-notifications:hover { color: var(--fg); text-decoration: none; }
 
+/* The help screen, reachable from the header of every page. */
+.nav-help {
+  color: var(--fg-muted);
+  text-decoration: none;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+}
+.nav-help:hover { color: var(--fg); background: rgba(0, 0, 0, 0.05); text-decoration: none; }
+
 .notification-badge {
   position: absolute;
   top: -6px;
@@ -290,7 +299,7 @@ summary:hover { text-decoration: underline; }
   button, .btn, .pr-tab {
     min-height: 2.5rem;
   }
-  .nav-links a, .nav-notifications {
+  .nav-links a, .nav-help, .nav-notifications {
     padding: 0.25rem;
   }
 }
