@@ -18,6 +18,17 @@ import { cachedFetch, TTL, type CacheMode } from './api-cache.js';
 
 export type ReviewDecision = 'APPROVED' | 'CHANGES_REQUESTED' | 'REVIEW_REQUIRED' | null;
 
+/**
+ * The check verdict on a pull request's head commit, in the three values the status dot
+ * paints. This comes from one GraphQL rollup, so it carries no count of failures — only
+ * that some check failed.
+ */
+export interface OverviewChecks {
+  state: 'passed' | 'failed' | 'pending';
+  /** How many checks GitHub counted in the rollup. */
+  total: number;
+}
+
 export interface OverviewPull {
   number: number;
   title: string;
@@ -35,6 +46,8 @@ export interface OverviewPull {
   reviewCount: number;
   commentCount: number;
   reviewDecision: ReviewDecision;
+  /** Check verdict for the status dot. Null when GitHub reports no rollup. */
+  checks: OverviewChecks | null;
   /** Head commit, so per-file "reviewed" progress from the local DB can be keyed to it. */
   headSha: string;
   /** Why this is waiting on you. Empty on PRs fetched outside the review-request search. */
@@ -51,6 +64,14 @@ export interface OverviewMention {
   updatedAt: string;
   authorLogin: string;
   isPullRequest: boolean;
+  // Detail for the row. An issue has none of it, so it is null there: GitHub keeps no
+  // diff, draft flag, review state, or checks for an issue.
+  draft: boolean | null;
+  changedFiles: number | null;
+  additions: number | null;
+  deletions: number | null;
+  reviewDecision: ReviewDecision;
+  checks: OverviewChecks | null;
 }
 
 /** A capped slice of a result set, which always knows how much it is not showing. */
@@ -97,6 +118,7 @@ const PULL_FIELDS = `
   deletions
   reviewDecision
   headRefOid
+  statusCheckRollup { state contexts { totalCount } }
   author { __typename login }
   repository { nameWithOwner }
   reviews(first: 0) { totalCount }
@@ -177,6 +199,12 @@ const OVERVIEW_QUERY = `
           number title updatedAt
           author { login }
           repository { nameWithOwner }
+          isDraft
+          changedFiles
+          additions
+          deletions
+          reviewDecision
+          statusCheckRollup { state contexts { totalCount } }
         }
       }
     }
@@ -236,6 +264,21 @@ export function myTeamSlugs(viewer: any): Set<string> {
   return slugs;
 }
 
+/**
+ * GitHub's rollup state, reduced to the three values the dot paints. A missing rollup
+ * means GitHub counted nothing, not that the checks passed.
+ */
+function toOverviewChecks(rollup: any): OverviewChecks | null {
+  if (typeof rollup?.state !== 'string') return null;
+  const state: OverviewChecks['state'] =
+    rollup.state === 'SUCCESS'
+      ? 'passed'
+      : rollup.state === 'FAILURE' || rollup.state === 'ERROR'
+        ? 'failed'
+        : 'pending';
+  return { state, total: rollup.contexts?.totalCount ?? 0 };
+}
+
 export function toOverviewPull(node: any): OverviewPull | null {
   if (!node || typeof node.number !== 'number') return null;
   const fullName: string = node.repository?.nameWithOwner ?? '';
@@ -259,16 +302,18 @@ export function toOverviewPull(node: any): OverviewPull | null {
     reviewCount: node.reviews?.totalCount ?? 0,
     commentCount: node.comments?.totalCount ?? 0,
     reviewDecision: node.reviewDecision ?? null,
+    checks: toOverviewChecks(node.statusCheckRollup),
     headSha: node.headRefOid ?? '',
     requestedFromYou: false,
     requestedTeams: [],
   };
 }
 
-function toOverviewMention(node: any): OverviewMention | null {
+export function toOverviewMention(node: any): OverviewMention | null {
   if (!node || typeof node.number !== 'number') return null;
   const fullName: string = node.repository?.nameWithOwner ?? '';
   const { owner, repo } = splitFullName(fullName);
+  const isPullRequest = node.__typename === 'PullRequest';
   return {
     number: node.number,
     title: node.title ?? '',
@@ -277,7 +322,13 @@ function toOverviewMention(node: any): OverviewMention | null {
     fullName,
     updatedAt: node.updatedAt ?? '',
     authorLogin: node.author?.login ?? 'ghost',
-    isPullRequest: node.__typename === 'PullRequest',
+    isPullRequest,
+    draft: typeof node.isDraft === 'boolean' ? node.isDraft : null,
+    changedFiles: node.changedFiles ?? null,
+    additions: node.additions ?? null,
+    deletions: node.deletions ?? null,
+    reviewDecision: node.reviewDecision ?? null,
+    checks: toOverviewChecks(node.statusCheckRollup),
   };
 }
 
@@ -289,9 +340,11 @@ function pulls(section: any): OverviewPull[] {
  * Cache key for the overview.
  *
  * v1: initial three-section dashboard.
+ * v2: rows carry check state and the pull-request-only mention fields, so a cached v1
+ *     row would render without the dot's colors.
  */
 export function overviewCacheKey(login: string): string {
-  return `dashboard-overview:v1:${login}`;
+  return `dashboard-overview:v2:${login}`;
 }
 
 export async function fetchDashboardOverview(

@@ -6,7 +6,11 @@ import {
   fetchPullDiffstat,
   getApprovers,
   readPullDiffstatCache,
+  readPullChecksCache,
+  fetchChecks,
+  fetchCombinedStatus,
   type PullDiffstat,
+  type PullCheckState,
 } from '../lib/github.js';
 import { buildStacks } from '../lib/stacks.js';
 import { config } from '../config.js';
@@ -156,6 +160,33 @@ export async function repoRoutes(fastify: FastifyInstance) {
           });
         }
 
+        // Whether every status check on the head commit has settled. Two GitHub requests
+        // per head SHA — check runs and commit statuses are separate endpoints — so the
+        // page itself only reads the cache, and a batched background pass warms the rest
+        // for the next load. The pass runs over every PR, not just the misses: a fresh
+        // cache row returns without touching the network, and a stale one revalidates
+        // through its ETag, which GitHub does not count against the rate limit. These
+        // are the same cached keys the PR page reads, so opening a PR warms its row here.
+        const checkStates: Array<PullCheckState | null> = pulls.map((pr) =>
+          readPullChecksCache(owner, repo, pr.head.sha)
+        );
+        void (async () => {
+          for (let i = 0; i < pulls.length; i += batchSize) {
+            await Promise.all(
+              pulls.slice(i, i + batchSize).map((pr) =>
+                Promise.all([
+                  fetchChecks(octokit, owner, repo, pr.head.sha),
+                  fetchCombinedStatus(octokit, owner, repo, pr.head.sha),
+                ]).catch((err: any) =>
+                  console.error(`Failed to fetch checks for PR #${pr.number}:`, err.status, err.message)
+                )
+              )
+            );
+          }
+        })().catch(() => {
+          // The page is already sent; a background failure must not crash the process.
+        });
+
         const enrichedPulls = pulls.map((pr, i) => ({
           number: pr.number,
           title: pr.title,
@@ -176,6 +207,7 @@ export async function repoRoutes(fastify: FastifyInstance) {
           otherApprovers: approvals[i].otherApprovers,
           additions: diffstats[i]?.additions ?? null,
           deletions: diffstats[i]?.deletions ?? null,
+          checks: checkStates[i],
         }));
 
         // Group into stacks (chains/trees linked by base<-head branch) + standalone PRs.

@@ -3,6 +3,7 @@ import { retry } from '@octokit/plugin-retry';
 import { throttling } from '@octokit/plugin-throttling';
 import { config } from '../config.js';
 import { cachedFetch, readCached, TTL, type CacheMode } from './api-cache.js';
+import { summarizeChecks } from './checks.js';
 
 const ArgusOctokit = Octokit.plugin(retry, throttling);
 
@@ -279,6 +280,37 @@ export function readPullDiffstatCache(
   return readCached<PullDiffstat>(prDiffstatKey(owner, repo, prNumber, headSha, baseSha));
 }
 
+/** Whether every status check on a PR's head commit has settled, for the list dot. */
+export interface PullCheckState {
+  state: 'passed' | 'failed' | 'pending';
+  total: number;
+  failed: number;
+}
+
+/**
+ * The cached check verdict for this head SHA, or null. Never touches the network —
+ * like the diffstat, the pulls list shows whatever is already computed and fills the
+ * rest in by a background fetch. Both sources must be cached: a verdict from check
+ * runs alone could call "passed" a commit whose commit statuses have not settled.
+ */
+export function readPullChecksCache(
+  owner: string,
+  repo: string,
+  headSha: string
+): PullCheckState | null {
+  const checks = readCached<CheckRun[]>(checksKey(owner, repo, headSha));
+  const status = readCached<{ state: string; statuses: Array<{ state: string }> }>(
+    statusKey(owner, repo, headSha)
+  );
+  if (!checks || !status) return null;
+  const summary = summarizeChecks(checks, status);
+  return {
+    state: summary.state === 'success' ? 'passed' : summary.state === 'failure' ? 'failed' : 'pending',
+    total: summary.total,
+    failed: summary.failed,
+  };
+}
+
 // Fetch PR files
 export async function fetchPRFiles(
   octokit: Octokit,
@@ -340,7 +372,10 @@ export async function fetchPRDiff(
   return response.data as unknown as string;
 }
 
-// Fetch checks for a commit
+// Fetch checks for a commit. Paginated to the end: a repo with matrix workflows can
+// put more than 100 check runs on one ref, and a page cut at 100 could hide a failing
+// run behind a verdict of "all passed". Most refs fit one page, so the common case is
+// a single request that 304s on repeat loads.
 export async function fetchChecks(
   octokit: Octokit,
   owner: string,
@@ -352,16 +387,32 @@ export async function fetchChecks(
     checksKey(owner, repo, ref),
     { ttlMs: TTL.checks, mode },
     async (headers) => {
-      const response = await octokit.checks.listForRef({
+      // The first page carries the ETag we validate against; only the first page is
+      // revalidated, the rest are refetched whenever the first page changes.
+      const first = await octokit.checks.listForRef({
         owner,
         repo,
         ref,
         per_page: 100,
         headers,
       });
+      const runs: CheckRun[] = [...(first.data.check_runs as CheckRun[])];
+      // Keep going while GitHub reports more runs than we hold and the last page came
+      // back full — either guard alone could loop forever if the total shifted mid-read.
+      for (let page = 2; runs.length < first.data.total_count; page++) {
+        const next = await octokit.checks.listForRef({
+          owner,
+          repo,
+          ref,
+          per_page: 100,
+          page,
+        });
+        runs.push(...(next.data.check_runs as CheckRun[]));
+        if (next.data.check_runs.length < 100) break;
+      }
       return {
-        data: response.data.check_runs as CheckRun[],
-        etag: response.headers.etag || null,
+        data: runs,
+        etag: first.headers.etag || null,
       };
     }
   );

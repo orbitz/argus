@@ -14,7 +14,7 @@
        this has to hold for every element on the page. */
     [hidden] { display: none !important; }
 
-    .pulls-page { max-width: 900px; margin: 0 auto; padding: 1rem; }
+    .pulls-page { max-width: 1280px; margin: 0 auto; padding: 1rem; }
     .pulls-truncated {
       margin: 0 0 1rem;
       padding: 0.5rem 0.75rem;
@@ -51,9 +51,11 @@
     .pulls-search-count { color: var(--fg-muted); font-size: 0.85rem; white-space: nowrap; }
 
     /* The rail draws the shape of a stack. A filtered stack is no longer that shape, so
-       it is not drawn while a query is active. */
+       no rail is drawn while a query is active. The lone dots of the standalone rows go
+       with it, so both sections indent alike; draft and approval state are also written
+       in the row itself, so nothing is lost. */
     .pulls-page.is-searching .rail { display: none; }
-    .pulls-page.is-searching .stack-node-row .pull-row { padding-left: 0.5rem; }
+    .pulls-page.is-searching .pull-item-row .pull-row { padding-left: 0.5rem; }
 
     .pulls-header { margin-bottom: 1rem; padding-bottom: 0.75rem; border-bottom: 1px solid var(--border); }
     .pulls-header h1 { font-size: 1.25rem; margin: 0; }
@@ -69,20 +71,50 @@
     .section-heading:first-of-type { margin-top: 0.25rem; }
 
     .pulls-list { margin: 0; padding: 0; list-style: none; }
-    .pull-item { position: relative; border-bottom: 1px solid var(--border-subtle); }
+    .pull-item { border-bottom: 1px solid var(--border-subtle); }
     .pull-item:last-child { border-bottom: none; }
 
     /* The PR link stretches over the whole row, so a click anywhere opens it here.
-       The GitHub icon is a real link of its own and sits above that overlay. */
+       It sits on .pull-item-row, outside .pull-row, in both sections. The GitHub icon
+       is a real link of its own and sits above it. */
     .pull-link { position: absolute; inset: 0; }
 
-    .pull-row { display: flex; gap: 0.75rem; align-items: baseline; padding: 0.625rem 0; }
-    .pull-item:hover { background: var(--surface); }
-    .pull-item:hover .pull-title { color: var(--accent); }
-    .pull-number { color: var(--fg-muted); font-size: 0.9rem; min-width: 4em; }
-    .pull-title { flex: 1; color: var(--fg); min-width: 0; }
-    .pull-draft { color: var(--warning); font-size: 0.8rem; }
-    .pull-author { color: var(--fg-subtle); font-size: 0.85rem; white-space: nowrap; }
+    /* One fixed column per field, so the eye can scan straight down the list. The
+       template is shared by the stack rows and the standalone rows, and only holds
+       fields every row has: badges that come and go (draft, approvals) live inside
+       the title cell instead, or most rows would show an empty gap where a sparse
+       column sits. Only the title flexes; the rest are fixed widths that do not
+       depend on content, so nothing shifts between rows. */
+    .pull-row {
+      display: grid;
+      grid-template-columns:
+        4em         /* number */
+        minmax(0, 1fr)  /* title, with draft and approval badges inline */
+        4.5ch       /* additions */
+        4.5ch       /* deletions */
+        16ch        /* branch */
+        1.5em       /* external icon */
+        9em;        /* author */
+      column-gap: 0.75rem;
+      align-items: baseline;
+    }
+    .pull-number { grid-column: 1; color: var(--fg-muted); font-size: 0.9rem; }
+    .pull-title {
+      grid-column: 2; color: var(--fg); min-width: 0;
+      display: flex; flex-wrap: wrap; align-items: baseline; gap: 0.25rem 0.5rem;
+    }
+    .pull-draft { color: var(--warning); font-size: 0.8rem; white-space: nowrap; }
+    .pull-author {
+      grid-column: 7;
+      color: var(--fg-subtle); font-size: 0.85rem;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .pull-external { grid-column: 6; }
+    /* The wrapper disappears into the grid; its two spans become columns 3 and 4. */
+    .pull-stat { display: contents; }
+    .pull-stat .additions { grid-column: 3; }
+    .pull-stat .deletions { grid-column: 4; }
+    .pull-branch { grid-column: 5; }
     .pull-external {
       align-self: center;
       position: relative; z-index: 1;
@@ -103,7 +135,7 @@
     .pull-branch {
       color: var(--fg-subtle); font-size: 0.78rem; white-space: nowrap;
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      overflow: hidden; text-overflow: ellipsis; max-width: 16ch;
+      overflow: hidden; text-overflow: ellipsis;
     }
 
     .pull-approved { color: var(--success); font-size: 0.8rem; font-weight: 600; white-space: nowrap; }
@@ -113,19 +145,27 @@
       padding: 0.1rem 0.4rem; border: 1px solid #cdd5dd; border-radius: 999px;
     }
 
-    /* --- Stacked-PR rail (git-log style) --- */
+    /* --- Rail (git-log style) ---------------------------------------------------
+       The rail draws how a stack sits on top of itself. The standalone rows reuse one
+       cell of it, a bare node dot, so the two sections read as one list. */
     .stack { margin-bottom: 1rem; }
     .stack-cap { color: var(--fg-subtle); font-size: 0.8rem; padding: 0 0 0.15rem 0.5rem; }
     .stack-nodes { list-style: none; margin: 0; padding: 0; }
-    .stack-node { border-bottom: 1px solid #f2f2f2; }
+    .stack-node { border-bottom: 1px solid var(--border-subtle); }
     .stack-node:last-child { border-bottom: none; }
 
-    .stack-node-row { display: flex; align-items: stretch; position: relative; }
-    .stack-node-row:hover { background: var(--surface); }
-    .stack-node-row:hover .pull-title { color: var(--accent); }
-    .stack-node-row .pull-row { flex: 1; align-items: center; padding: 0.5rem 0.5rem 0.5rem 0; }
-    /* Same stretched overlay as .pull-link, for the rail rows. */
-    .stack-node-link { position: absolute; inset: 0; }
+    /* One row shape for both sections: an optional rail cell, then the field grid. The
+       stretched overlay link lives here, so the hover highlight covers the rail too. */
+    .pull-item-row {
+      display: flex; align-items: stretch; position: relative;
+      transition: background-color 0.08s ease-in-out;
+    }
+    .pull-item-row:hover { background: var(--surface); }
+    .pull-item-row:hover .pull-title { color: var(--accent); }
+    /* Same height, alignment, and right inset in both sections. Horizontal padding, not
+       0: the hover highlight must not touch the text. Left padding is 0 because the rail
+       cell already holds that space. */
+    .pull-item-row .pull-row { flex: 1; padding: 0.625rem 0.5rem 0.625rem 0; }
 
     .rail { display: flex; align-items: stretch; flex: 0 0 auto; }
     .rail-cell { position: relative; width: 22px; flex: 0 0 22px; }
@@ -160,11 +200,26 @@
     /* Node dot (white halo masks the line passing behind it) */
     .dot {
       position: absolute; top: 50%; left: 50%; width: 10px; height: 10px; margin: -5px 0 0 -5px;
-      border-radius: 50%; background: var(--fg-muted); box-shadow: 0 0 0 3px #fff;
+      /* The halo masks the line passing behind the dot, so it must match the page. */
+      border-radius: 50%; background: var(--fg-muted); box-shadow: 0 0 0 3px var(--card);
     }
     .is-approved .dot { background: var(--success); }
-    .is-draft .dot { background: #fff; border: 2px solid var(--fg-subtle); }
+    .is-draft .dot { background: var(--card); border: 2px solid var(--fg-subtle); }
     .is-draft.is-approved .dot { border-color: var(--success); }
+
+    /* Check state on the same dot. Passed reads green like approved — both mean
+       "nothing blocks this PR". Pending checks change nothing: a resting dot is
+       indistinguishable from a pending one, and an uncomputed row fills in on a
+       later load. */
+    .is-checks-passed .dot { background: var(--success); }
+    .is-draft.is-checks-passed .dot { background: var(--card); border-color: var(--success); }
+    .is-checks-failed .dot { background: var(--danger); }
+    .is-draft.is-checks-failed .dot { background: var(--card); border-color: var(--danger); }
+    /* Approved but failing: the green fill stands, a ring marks the failure. */
+    .is-approved.is-checks-failed .dot {
+      background: var(--success);
+      box-shadow: 0 0 0 3px var(--card), 0 0 0 5px var(--danger);
+    }
 
     .empty-state { color: var(--fg-muted); text-align: center; padding: 3rem; }
 
@@ -172,16 +227,19 @@
     @media (max-width: 768px) {
       .pulls-page { padding: 0.75rem; }
       .pulls-filters { flex-wrap: wrap; }
-      .pull-row { flex-wrap: wrap; gap: 0.5rem; }
-      .pull-number { min-width: auto; }
-      .stack-node-row .pull-row { flex-wrap: nowrap; }
+      /* The fixed columns assume more room than a narrow screen has, so rows fall
+         back to wrapped flex here; the grid-column names are ignored in that layout. */
+      .pull-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+      .pull-stat { display: inline-flex; gap: 0.45rem; }
+      .pull-title { flex: 1; }
+      .pull-branch { max-width: 16ch; }
     }
 
     @media (max-width: 480px) {
       .pulls-page { padding: 0.5rem; }
       .pulls-header h1 { font-size: 1rem; }
       .filter-link { padding: 0.25rem 0.5rem; font-size: 0.8rem; }
-      .pull-row { padding: 0.5rem 0; }
+      .pull-item-row .pull-row { padding: 0.5rem 0; }
       .pull-title { font-size: 0.9rem; }
       .pull-author { font-size: 0.8rem; }
       .rail-cell { width: 16px; flex-basis: 16px; }
@@ -193,6 +251,7 @@
   <header class="site-header">
     <nav class="nav-container">
       <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
+      <a href="/help" class="nav-help" title="Help">Help</a>
       <% if (user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">
           <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 16a2 2 0 001.985-1.75c.017-.137-.097-.25-.235-.25h-3.5c-.138 0-.252.113-.235.25A2 2 0 008 16zM3 5a5 5 0 0110 0v2.947c0 .05.015.098.042.139l1.703 2.555A1.519 1.519 0 0113.482 13H2.518a1.519 1.519 0 01-1.263-2.36l1.703-2.554A.255.255 0 003 7.947V5z"/></svg>
@@ -216,7 +275,10 @@
     function rowMain(pr) {
       let h = '';
       h += '<span class="pull-number">#' + pr.number + '</span>';
-      h += '<span class="pull-title">' + esc(pr.title) + '</span>';
+      // Draft and approval badges sit inside the title cell, after the text. They do
+      // not go in columns of their own: rows without them would leave a hole in the
+      // grid, and a hole between the title and the numbers breaks the scan.
+      h += '<span class="pull-title"><span class="pull-title-text">' + esc(pr.title) + '</span>';
       if (pr.draft) h += '<span class="pull-draft">(draft)</span>';
       if (pr.approved) h += '<span class="pull-approved" title="You approved this PR">✓ Approved by you</span>';
       if (pr.otherApprovers && pr.otherApprovers.length > 0) {
@@ -224,13 +286,16 @@
         const label = others.length === 1 ? others[0] : others[0] + ' +' + (others.length - 1);
         h += '<span class="pull-approved-others" title="Approved by ' + esc(others.join(', ')) + '">✓ ' + esc(label) + '</span>';
       }
+      h += '</span>';
       // Size of the PR at a glance: additions first, then deletions, to the left of the
       // branch name. The route supplies the counts when the cached diffstat is ready;
       // null renders nothing and the background fill shows on the next load.
+      // The wrapper is display:contents in the grid (its spans are columns of their
+      // own), so it has no box to hover; each span carries the tooltip itself.
       if (pr.additions != null) {
-        h += '<span class="pull-stat" title="Lines added and lines removed">'
-          + '<span class="additions">+' + pr.additions + '</span>'
-          + '<span class="deletions">-' + pr.deletions + '</span>'
+        h += '<span class="pull-stat">'
+          + '<span class="additions" title="Lines added">+' + pr.additions + '</span>'
+          + '<span class="deletions" title="Lines removed">-' + pr.deletions + '</span>'
           + '</span>';
       }
       if (pr.headRef) h += '<span class="pull-branch" title="' + esc(pr.headRef) + '">' + esc(pr.headRef) + '</span>';
@@ -248,11 +313,37 @@
         + '<path d="M3.75 2h3.5a.75.75 0 0 1 0 1.5h-3.5a.25.25 0 0 0-.25.25v8.5c0 .138.112.25.25.25h8.5a.25.25 0 0 0 .25-.25v-3.5a.75.75 0 0 1 1.5 0v3.5A1.75 1.75 0 0 1 12.25 14h-8.5A1.75 1.75 0 0 1 2 12.25v-8.5C2 2.784 2.784 2 3.75 2Zm6.854-1h4.146a.25.25 0 0 1 .25.25v4.146a.25.25 0 0 1-.427.177L13.03 4.03 9.28 7.78a.751.751 0 0 1-1.042-.018.751.751 0 0 1-.018-1.042l3.75-3.75-1.543-1.543A.25.25 0 0 1 10.604 1Z"/>'
         + '</svg></a>';
     }
-    // The PR link stretches over the whole row (see .pull-link / .stack-node-link), so
+    // The PR link stretches over the whole row (see .pull-link), so
     // it is an empty anchor; the icon carries the accessible name for this row instead.
     function prLink(owner, repo, pr, cls) {
       return '<a href="/pr/' + esc(owner) + '/' + esc(repo) + '/' + pr.number + '" class="' + cls + '"></a>';
     }
+    // The cell that carries the dot. A stack row keeps line stubs above or below unless
+    // it is the root or the tip; a standalone row is both, so it renders a lone dot.
+    // Draft, approval, and check state color the dot the same way in both sections.
+    function railNodeCell(node, pr) {
+      let cls = 'rail-cell rail-node';
+      if (node.isRoot) cls += ' no-top';
+      if (node.isTip) cls += ' no-bottom';
+      if (pr.draft) cls += ' is-draft';
+      if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) cls += ' is-approved';
+      if (pr.checks && pr.checks.state === 'passed') cls += ' is-checks-passed';
+      if (pr.checks && pr.checks.state === 'failed') cls += ' is-checks-failed';
+      return cls;
+    }
+    // What the dot encodes, as hover text. Check state only when it is known — an
+    // uncomputed row shows a bare dot until a background pass fills it in.
+    function dotTitle(pr) {
+      const parts = [];
+      if (pr.draft) parts.push('Draft');
+      if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) parts.push('Approved');
+      if (pr.checks) {
+        if (pr.checks.state === 'passed') parts.push('All ' + pr.checks.total + ' checks passed');
+        else if (pr.checks.state === 'failed') parts.push(pr.checks.failed + ' of ' + pr.checks.total + ' checks failed');
+        else parts.push('Checks running');
+      }
+      return parts.join(' \u00b7 ');
+ }
   %>
 
   <main class="pulls-page">
@@ -303,21 +394,15 @@
           <ul class="stack-nodes">
             <% stack.nodes.forEach(node => { const pr = node.pr; %>
               <li class="stack-node js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-                <div class="stack-node-row">
+                <div class="pull-item-row">
                   <span class="rail">
                     <% node.cells.forEach((cell, idx) => {
                          const isNodeCell = idx === node.cells.length - 1;
-                         let cls = 'rail-cell rail-' + cell;
-                         if (isNodeCell) {
-                           if (node.isRoot) cls += ' no-top';
-                           if (node.isTip) cls += ' no-bottom';
-                           if (pr.draft) cls += ' is-draft';
-                           if (pr.approved || (pr.otherApprovers && pr.otherApprovers.length > 0)) cls += ' is-approved';
-                         }
-                    %><span class="<%= cls %>"><% if (isNodeCell) { %><span class="dot"></span><% } %></span><% }); %>
+                         const cls = isNodeCell ? railNodeCell(node, pr) : 'rail-cell rail-' + cell;
+                    %><span class="<%= cls %>"><% if (isNodeCell) { const dotTip = dotTitle(pr); %><span class="dot"<%- dotTip ? ' title="' + esc(dotTip) + '"' : '' %>></span><% } %></span><% }); %>
                   </span>
                   <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
-                  <%- prLink(owner, repo, pr, 'stack-node-link') %>
+                  <%- prLink(owner, repo, pr, 'pull-link') %>
                 </div>
               </li>
             <% }); %>
@@ -333,7 +418,12 @@
       <ul class="pulls-list">
         <% standalone.forEach(pr => { %>
           <li class="pull-item js-pull-entry" data-number="<%= pr.number %>" data-title="<%= pr.title %>">
-            <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %><%- prLink(owner, repo, pr, 'pull-link') %></div>
+            <div class="pull-item-row">
+              <% const dotTip = dotTitle(pr); %>
+              <span class="rail"><span class="<%= railNodeCell({ isRoot: true, isTip: true }, pr) %>"><span class="dot"<%- dotTip ? ' title="' + esc(dotTip) + '"' : '' %>></span></span></span>
+              <div class="pull-row"><%- rowMain(pr) %><%- externalIcon(pr, owner, repo) %><%- rowAuthor(pr) %></div>
+              <%- prLink(owner, repo, pr, 'pull-link') %>
+            </div>
           </li>
         <% }); %>
       </ul>

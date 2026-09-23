@@ -62,6 +62,7 @@
   <header class="site-header">
     <nav class="nav-container">
       <a href="/dashboard" class="nav-logo"><%- include('partials/logo') %><span>Argus</span></a>
+      <a href="/help" class="nav-help" title="Help">Help</a>
       <a href="/pr/<%= owner %>/<%= repo %>/<%= prNumber %>">&larr; PR #<%= prNumber %></a>
       <% if (user) { %>
         <a href="/notifications" class="nav-notifications" id="nav-notifications" title="Review requests">

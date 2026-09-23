@@ -25,6 +25,7 @@ import { prRoutes } from './routes/pr.js';
 import { repoRoutes } from './routes/repos.js';
 import { dashboardRoutes } from './routes/dashboard.js';
 import { notificationRoutes } from './routes/notifications.js';
+import { helpRoutes } from './routes/help.js';
 import { githubCompatRoutes } from './routes/github-compat.js';
 import { authMiddleware, initTokenAuth } from './middleware/auth.js';
 
@@ -116,6 +117,7 @@ async function start() {
     await fastify.register(prRoutes);
     await fastify.register(dashboardRoutes);
     await fastify.register(notificationRoutes);
+    await fastify.register(helpRoutes);
     // Registered last: these are catch-all-shaped param routes for github.com's own URLs,
     // and every route above is more specific than they are.
     await fastify.register(githubCompatRoutes);

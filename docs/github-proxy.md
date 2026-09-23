@@ -26,9 +26,10 @@ consequences you should accept deliberately:
   credentials `git push` sends over HTTPS. It is not logged by this config, but it is
   decrypted in memory on that host.
 
-For a single browser with no server involved, a redirect extension is a smaller hammer.
-This setup is the one to use when you want git, the CLI, and several machines to keep
-working against one shared Argus.
+For a single browser with no server involved, a redirect extension is a smaller hammer,
+and so is Argus's own bookmarklet: open `/help` on the Argus host and drag the button to the
+bookmarks bar. This setup is the one to use when you want git, the CLI, and several machines
+to keep working against one shared Argus.
 
 ## Setup
 
@@ -124,6 +125,8 @@ through the proxy.
 | `github.com/notifications` | Argus notifications |
 | `github.com/owner/repo/pulls` | Argus PR list |
 | `github.com/owner/repo/pull/42` and its sub-pages | Argus PR view |
+| `github.com/help` | Argus help screen (bookmarklet) |
+| `github.com/bookmarklet` | The bookmarklet's click target |
 | everything else | the real github.com |
 
 GitHub's Files and Commits tabs both map to Argus's merged Review tab; `/checks` maps to
