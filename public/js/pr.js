@@ -157,6 +157,9 @@
     return el.classList.contains('file-reviewed') || el.classList.contains('commit-reviewed');
   }
 
+  // Every card carries a review checkbox — including both halves of a moved file —
+  // so isItemReviewed alone answers this. The go-to modal lists the same set via
+  // reviewItems().
   function unreviewedItems() {
     return reviewItems().filter(el => !isItemReviewed(el));
   }

@@ -152,4 +152,60 @@ describe('pr.js', () => {
       expect(win.fetch).toHaveBeenCalledWith('/pr/o/r/1/head');
     });
   });
+
+  describe('the delete card of a move', () => {
+    // A move splits into two cards and the one at the vacated path shows a notice
+    // instead of a diff body. It carries the same review checkbox as every other card
+    // (see diff-renderer), so it is an ordinary review item: a stop for n/p, a target
+    // for `r`, and part of the review denominator.
+    const page = () => buildPage({ files: 1, commits: 0 }).replace(
+      '<div id="diff-container">',
+      `<div id="diff-container">
+        <details class="diff-file" data-path="old/file.ts" data-additions="0" data-deletions="0">
+          <input type="checkbox" class="file-reviewed-toggle" data-path="old/file.ts" data-file-sha="">
+        </details>`
+    );
+
+    const press = (win: any, key: string) =>
+      win.document.dispatchEvent(new win.KeyboardEvent('keydown', { key, bubbles: true }));
+
+    it('is a navigation stop for n', () => {
+      const { win, doc } = load(page());
+      win.Element.prototype.scrollIntoView = () => {};
+      press(win, 'n');
+      expect(doc.querySelector('.review-item-current')!.getAttribute('data-path')).toBe('old/file.ts');
+      // Every item is unreviewed, so the second press wraps around to it again.
+      press(win, 'n');
+      expect(doc.querySelector('.review-item-current')!.getAttribute('data-path')).toBe('old/file.ts');
+    });
+
+    it('marks the card reviewed when `r` is pressed', async () => {
+      const { win, doc } = load(page());
+      win.Element.prototype.scrollIntoView = () => {};
+      win.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reviewed: true }) });
+
+      press(win, 'r');
+      await new Promise((r) => setTimeout(r, 0));
+
+      expect(win.fetch).toHaveBeenCalledWith(
+        '/pr/o/r/1/file-review',
+        expect.objectContaining({
+          method: 'POST',
+          body: JSON.stringify({ file_path: 'old/file.ts', head_sha: 'abc', file_sha: '' }),
+        })
+      );
+      expect(doc.querySelector('[data-path="old/file.ts"]')!.classList.contains('file-reviewed')).toBe(true);
+      expect(doc.querySelector('[data-path="old/file.ts"]')!.hasAttribute('open')).toBe(false);
+    });
+
+    it('is counted in the review denominator', async () => {
+      const { win, doc } = load(page());
+      win.Element.prototype.scrollIntoView = () => {};
+      win.fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ reviewed: true }) });
+      const cb = doc.querySelector('[data-path="src/file-0.ts"] .file-reviewed-toggle') as HTMLInputElement;
+      cb.click();
+      await new Promise((r) => setTimeout(r, 0));
+      expect(doc.getElementById('files-section-count')!.textContent).toBe('1 / 2 reviewed');
+    });
+  });
 });

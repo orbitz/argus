@@ -510,7 +510,8 @@ a.file-deep-link:hover { text-decoration: underline; }
 .keyboard-shortcut kbd { font-family: 'SF Mono', Consolas, monospace; font-size: 0.75rem; background: var(--border-subtle); padding: 0.125em 0.375em; border-radius: 2px; border: 1px solid var(--border); min-width: 2em; text-align: center; }
 .keyboard-shortcut span { color: var(--fg-muted); }
 
-.diff-binary-notice, .diff-empty-notice { padding: 1rem; color: var(--fg-muted); text-align: center; }
+.diff-binary-notice, .diff-empty-notice, .diff-rename-notice { padding: 1rem; color: var(--fg-muted); text-align: center; }
+.file-moved-note { color: var(--fg-muted); font-size: 0.85em; margin-left: 0.5rem; }
 
 /* Responsive - Tablet */
 @media (max-width: 900px) {

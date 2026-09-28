@@ -316,7 +316,11 @@ function injectOrphanedCommentHunks(
 const STATUS_BADGES: Record<string, { class: string; text: string }> = {
   added: { class: 'badge-added', text: 'A' },
   deleted: { class: 'badge-deleted', text: 'D' },
+  // GitHub's diff-entry enum sends `removed`/`changed`, never `deleted` — without
+  // these aliases a genuinely deleted file fell through to the M badge.
+  removed: { class: 'badge-deleted', text: 'D' },
   modified: { class: 'badge-modified', text: 'M' },
+  changed: { class: 'badge-modified', text: 'M' },
   renamed: { class: 'badge-renamed', text: 'R' },
 };
 
@@ -391,6 +395,17 @@ function buildNormalFileChrome(
     </span>
   `;
 
+  // The cross-link of a moved card appears exactly once: here when the body is a
+  // table, in the body notice otherwise (renderFile's move-notice branch).
+  const movedNote =
+    file.hunks.length === 0
+      ? ''
+      : file.movedTo
+        ? `<span class="file-moved-note" title="File moved"> → ${escapeHtml(file.movedTo)}</span>`
+        : file.movedFrom
+          ? `<span class="file-moved-note" title="File moved"> ← ${escapeHtml(file.movedFrom)}</span>`
+          : '';
+
   const attrs = `class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-sha="${headSha}" data-additions="${file.additions}" data-deletions="${file.deletions}"`;
 
   const summary = `
@@ -400,7 +415,7 @@ function buildNormalFileChrome(
           <a class="file-path file-deep-link" href="#file-${fileId}" onclick="event.stopPropagation()" style="text-decoration: none; color: inherit;">
             <span class="file-directory">${escapeHtml(directory)}</span>
             <span class="file-name">${escapeHtml(filename)}</span>
-          </a>
+          </a>${movedNote}
         </span>
         <span class="file-stats">${statsHtml}${syntaxToggle}${fullFileCheckbox}${renderedCheckbox}${reviewCheckbox}</span>
       </summary>`;
@@ -497,6 +512,40 @@ export async function renderFile(
       <label for="file-reviewed-${fileId}">Reviewed</label>
     </span>
   `;
+
+  // A card produced by the rename split shows the move instead of content. The
+  // cross-link appears exactly once per card: in this body notice when there is no
+  // table below, in the header otherwise (buildNormalFileChrome). Both halves carry
+  // the review checkbox: a moved file is walked with the same n/p/r hotkeys as any
+  // other card, so neither half may be a dead end.
+  const isMoveNotice = Boolean(file.movedTo) || (Boolean(file.movedFrom) && file.hunks.length === 0);
+  if (isMoveNotice) {
+    const notice = file.movedTo
+      ? `<div class="diff-rename-notice">File moved to ${escapeHtml(file.movedTo)}</div>`
+      : `<div class="diff-rename-notice">File moved from ${escapeHtml(file.movedFrom ?? path)}</div>`;
+    // Computed here rather than reusing statsHtml: the legacy synthetic branches
+    // construct moved cards with isBinary: true, and the binary-gated statsHtml
+    // would then print a "Binary" chip on a card whose stats are 0/0.
+    const moveStats = `<span class="file-stat additions">+${file.additions}</span>
+       <span class="file-stat deletions">-${file.deletions}</span>`;
+    // No syntax toggle: there is no content here to highlight.
+    return `
+      <details class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-additions="${file.additions}" data-deletions="${file.deletions}" ${isReviewed ? '' : 'open'}>
+        <summary class="file-header" id="file-${fileId}">
+          <span class="file-header-info">
+            <span class="status-badge ${badge.class}">${badge.text}</span>
+            <span class="file-path">
+              <span class="file-directory">${escapeHtml(directory)}</span>
+              <span class="file-name">${escapeHtml(filename)}</span>
+            </span>
+          </span>
+          <span class="file-stats">${moveStats}${reviewCheckbox}</span>
+        </summary>
+        <div class="diff-content">
+          ${notice}
+        </div>
+      </details>`;
+  }
 
   // Binary file
   if (file.isBinary) {

@@ -197,6 +197,8 @@ export interface IssueComment {
 export interface PRFile {
   sha: string;
   filename: string;
+  /** The path before a move; GitHub sends it only for `status: 'renamed'`. */
+  previous_filename?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -672,6 +674,8 @@ export async function fetchCommit(
   };
   files: Array<{
     filename: string;
+    /** The path before a move; GitHub sends it only for `status: 'renamed'`. */
+    previous_filename?: string;
     status: string;
     additions: number;
     deletions: number;
@@ -693,6 +697,7 @@ export async function fetchCommit(
     },
     files: (response.data.files || []).map(f => ({
       filename: f.filename,
+      previous_filename: f.previous_filename,
       status: f.status,
       additions: f.additions,
       deletions: f.deletions,

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { renderFile, renderFileShell, sourcesFromFullContextPatch } from '../src/lib/diff-renderer.js';
-import { parsePatch } from '../src/lib/diff-parser.js';
+import { parsePatch, type DiffFile } from '../src/lib/diff-parser.js';
 
 const PATCH = `@@ -1,3 +1,4 @@
  line 1
@@ -205,6 +205,82 @@ describe('diff-renderer', () => {
       ].join('\n');
 
       expect(sourcesFromFullContextPatch(patch)).toBeNull();
+    });
+  });
+
+  describe('rename split cards', () => {
+    const deleteCard = (): DiffFile => ({
+      oldPath: 'old/dir/file.ts',
+      newPath: 'old/dir/file.ts',
+      status: 'deleted',
+      hunks: [],
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+      movedTo: 'new/dir/file.ts',
+    });
+
+    const addCard = (): DiffFile => ({
+      oldPath: 'new/dir/file.ts',
+      newPath: 'new/dir/file.ts',
+      status: 'added',
+      hunks: [],
+      additions: 0,
+      deletions: 0,
+      isBinary: false,
+      movedFrom: 'old/dir/file.ts',
+    });
+
+    it('renders the delete card as a move notice that is still reviewable', async () => {
+      const html = await renderFile(deleteCard(), 'old-dir-file-ts', 'abc', 'o', 'r', 1, [], true, false, 'sha1');
+      expect(html).toContain('<div class="diff-rename-notice">File moved to new/dir/file.ts</div>');
+      expect(html).toContain('badge-deleted');
+      expect(html).toContain('data-path="old/dir/file.ts"');
+      // 0/0 as plain stats, never the binary chip — even though the legacy synthetic
+      // branch builds moved cards with isBinary: true.
+      expect(html).toContain('file-stat additions">+0');
+      expect(html).toContain('file-stat deletions">-0');
+      expect(html).not.toContain('file-stat binary');
+      expect(html).not.toContain('diff-binary-notice');
+      // The checkbox behaves like any other card: present, keyed on the path and SHA
+      // the toggle POSTs, and checked when the card is reviewed.
+      expect(html).toContain('class="file-reviewed-toggle"');
+      expect(html).toContain('data-file-sha="sha1"');
+      expect(html).toMatch(/file-reviewed-toggle[^>]*checked/);
+      expect(html).toContain('class="diff-file file-reviewed"');
+      expect(html).not.toContain('open>');
+      expect(html).not.toContain('data-unreviewable');
+    });
+
+    it('renders a patchless add card as a move notice but keeps it reviewable', async () => {
+      const html = await renderFile(addCard(), 'new-dir-file-ts', 'abc', 'o', 'r', 1, [], false, false, 'sha1');
+      expect(html).toContain('<div class="diff-rename-notice">File moved from old/dir/file.ts</div>');
+      expect(html).toContain('class="file-reviewed-toggle"');
+      expect(html).toContain('badge-added');
+      expect(html).not.toContain('data-unreviewable');
+    });
+
+    it('shows the cross-link in the header when the add card carries a patch', async () => {
+      const file = parsePatch(PATCH, 'new/dir/file.ts', 'added');
+      file.movedFrom = 'old/dir/file.ts';
+      const html = await renderFile(file, 'new-dir-file-ts', 'abc', 'o', 'r', 1, [], false, false, 'sha1');
+      expect(html).toContain('<table class="diff-table">');
+      expect(html).toContain('file-moved-note');
+      expect(html).toContain('← old/dir/file.ts');
+      expect(html).not.toContain('diff-rename-notice');
+    });
+
+    it("maps GitHub's 'removed' status to the D badge", async () => {
+      const file = parsePatch(PATCH, 'gone.txt', 'removed');
+      const html = await renderFile(file, 'gone-txt', 'abc', 'o', 'r', 1, [], false, false, 'sha1');
+      expect(html).toContain('status-badge badge-deleted');
+      expect(html).toContain('>D</span>');
+    });
+
+    it("maps GitHub's 'changed' status to the M badge", async () => {
+      const file = parsePatch(PATCH, 't.txt', 'changed');
+      const html = await renderFile(file, 't-txt', 'abc', 'o', 'r', 1, [], false, false, 'sha1');
+      expect(html).toContain('status-badge badge-modified');
     });
   });
 });

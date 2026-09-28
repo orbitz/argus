@@ -99,6 +99,9 @@ export interface DiffFile {
   isBinary: boolean;
   oldMode?: string;
   newMode?: string;
+  /** Move cross-links: set only on cards produced by expandRenamedFile. */
+  movedTo?: string;
+  movedFrom?: string;
 }
 
 export interface ParsedDiff {

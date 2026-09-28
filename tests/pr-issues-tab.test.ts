@@ -53,6 +53,7 @@ function viewData(referencedIssues: unknown[]) {
       labels: [],
     },
     files: [],
+    fileCount: 0,
     fileTreeHtml: '',
     lazyDiffs: false,
     commentFiles: {},
