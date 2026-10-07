@@ -1629,14 +1629,20 @@
       reviewOverlay.classList.add('active');
     });
 
-    cancelReviewBtn.addEventListener('click', () => {
+    function closeReviewForm() {
       reviewForm.classList.remove('active');
       reviewOverlay.classList.remove('active');
-    });
+    }
 
-    reviewOverlay.addEventListener('click', () => {
-      reviewForm.classList.remove('active');
-      reviewOverlay.classList.remove('active');
+    cancelReviewBtn.addEventListener('click', closeReviewForm);
+
+    reviewOverlay.addEventListener('click', closeReviewForm);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!reviewForm.classList.contains('active')) return;
+      e.preventDefault();
+      closeReviewForm();
     });
   </script>
   <!-- Go to file modal -->
