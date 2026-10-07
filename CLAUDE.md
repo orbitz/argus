@@ -220,8 +220,9 @@ Docker and bare-metal deployments.
 - **`src/routes/github-compat.ts`** - root-level param routes that 302 to that mapping.
   Registered last in `index.ts`, since every other route is more specific. Always on, no
   configuration: it costs nothing when the proxy is not in use
-- `?argus=0` on any URL bypasses Argus at the nginx layer; the "View on GitHub" link in
-  `pr.ejs` carries it, or it would resolve back into Argus
+- `?argus=0` on any URL bypasses Argus at the nginx layer. Argus adds it nowhere: its
+  links out to github.com stay clean, so under the proxy they resolve back into Argus and
+  the flag goes on by hand when the real page is wanted
 - The nginx config resolves the upstream github.com through an explicit `resolver` rather
   than the system one, or the hosts entry would loop it back to itself
 

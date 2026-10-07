@@ -811,10 +811,10 @@
           <%= pr.title %>
           <span class="pr-number">
             #<%= pr.number %>
-            <%# ?argus=0 is the escape hatch for the github.com proxy setup (docs/github-proxy.md):
-                without it this link resolves back into Argus. GitHub itself ignores the
-                unknown parameter, so the link is unchanged for everyone else. %>
-            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>?argus=0"
+            <%# A plain github.com link, like every other link out of Argus. Under the
+                github.com proxy (docs/github-proxy.md) it resolves back into Argus; append
+                ?argus=0 by hand when you want the real page. %>
+            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>"
                target="_blank"
                rel="noopener"
                class="github-pr-link"
