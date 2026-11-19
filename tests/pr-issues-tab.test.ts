@@ -78,6 +78,7 @@ function viewData(referencedIssues: unknown[]) {
     fetchedAt: '2026-01-01T00:00:00Z',
     dataFetchedAt: '2026-01-01T00:00:00Z',
     inlineCommentFormTemplate: '',
+    replyCommentFormTemplate: '',
     pollIntervalMs: 30000,
     config: { ui: { pollIntervalMs: 30000 } },
     reviewedFiles: [],

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { renderFile, renderFileShell, sourcesFromFullContextPatch } from '../src/lib/diff-renderer.js';
+import { renderFile, renderFileShell, renderReplyCommentForm, sourcesFromFullContextPatch } from '../src/lib/diff-renderer.js';
 import { parsePatch, type DiffFile } from '../src/lib/diff-parser.js';
 
 const PATCH = `@@ -1,3 +1,4 @@
@@ -281,6 +281,49 @@ describe('diff-renderer', () => {
       const file = parsePatch(PATCH, 't.txt', 'changed');
       const html = await renderFile(file, 't-txt', 'abc', 'o', 'r', 1, [], false, false, 'sha1');
       expect(html).toContain('status-badge badge-modified');
+    });
+  });
+
+  describe('inline thread reply dialog', () => {
+    const decodeAttr = (value: string) =>
+      value
+        .replace(/&quot;/g, '"')
+        .replace(/&#039;/g, "'")
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&amp;/g, '&');
+
+    it('carries the comment body as lossless JSON on the thread reply button', async () => {
+      const file = parsePatch(PATCH, 'src/foo.ts', 'modified');
+      // A body a backslash-n scheme cannot carry: a literal backslash-n plus a real newline.
+      const body = 'first line\nsecond \\n "quoted" & <angled>';
+      const html = await renderFile(
+        file, 'src-foo-ts', 'abc123', 'o', 'r', 1,
+        [{
+          id: 7,
+          user: { login: 'alice', avatar_url: '' },
+          body,
+          renderedBody: '<p>x</p>',
+          created_at: new Date(0).toISOString(),
+          path: 'src/foo.ts',
+          line: 2,
+          side: 'RIGHT' as const,
+        }],
+        false, false, 'sha1'
+      );
+
+      const decoded = [...html.matchAll(/data-body="([^"]*)"/g)]
+        .map((m) => JSON.parse(decodeAttr(m[1] ?? '')));
+      expect(decoded).toEqual([body]);
+      expect(html.match(/class="btn btn-small reply-to-comment"/g)).toHaveLength(1);
+    });
+
+    it('emits the reply form template the client clones', () => {
+      const html = renderReplyCommentForm();
+      expect(html).toContain('<template id="reply-comment-form-template">');
+      expect(html).toContain('name="comment_id"');
+      expect(html).toContain('name="return_to"');
+      expect(html).toContain('inline-comment-form-js');
     });
   });
 });

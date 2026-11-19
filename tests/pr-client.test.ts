@@ -208,4 +208,98 @@ describe('pr.js', () => {
       expect(doc.getElementById('files-section-count')!.textContent).toBe('1 / 2 reviewed');
     });
   });
+
+  describe('the inline thread reply dialog', () => {
+    // The round trip must survive both a real newline and a literal backslash-n.
+    const BODY = 'first line\nsecond \\n line';
+
+    const escapeAttr = (value: string) =>
+      value
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+
+    const REPLY_TEMPLATE = `
+      <template id="reply-comment-form-template">
+        <tr class="inline-comment-form-row reply-comment-form-row inline-comment-form-js">
+          <td colspan="4">
+            <form class="inline-comment-form reply-form" method="POST">
+              <input type="hidden" name="comment_id" value="">
+              <input type="hidden" name="return_to" value="">
+              <textarea name="body" rows="3" required class="comment-textarea"></textarea>
+              <div class="comment-form-actions">
+                <button type="button" class="btn btn-small cancel-inline-comment">Cancel</button>
+                <button type="submit" class="btn btn-small">Reply</button>
+              </div>
+            </form>
+          </td>
+        </tr>
+      </template>`;
+
+    // Two threads in a diff body, i.e. content a lazy fetch injects after init().
+    const page = () => buildPage({ files: 1, commits: 0 }).replace(
+      '<div id="diff-container">',
+      `<div id="diff-container">
+        <details class="diff-file" data-path="src/file-0.ts" open>
+          <div class="diff-content">
+            <table class="diff-table"><tbody>
+              ${[7, 8].map((id) => `
+              <tr class="comment-thread-row"><td colspan="4"><div class="comment-thread">
+                <div class="inline-comment" id="comment-${id}" data-comment-id="${id}">
+                  <button type="button" class="btn btn-small reply-to-comment"
+                          data-author="alice" data-comment-id="${id}"
+                          data-body="${escapeAttr(JSON.stringify(BODY))}">Reply</button>
+                </div>
+              </div></td></tr>`).join('')}
+            </tbody></table>
+          </div>
+        </details>
+        ${REPLY_TEMPLATE}
+      </div>`
+    );
+
+    const clickReply = (doc: any, index = 0) =>
+      doc.querySelectorAll('.reply-to-comment[data-comment-id]')[index].click();
+
+    it('opens a prefilled reply form under the clicked thread', () => {
+      const { doc, errors } = load(page());
+      clickReply(doc, 0);
+
+      const formRow = doc.querySelector('.reply-comment-form-row');
+      expect(formRow).not.toBeNull();
+      expect(formRow.previousElementSibling.classList.contains('comment-thread-row')).toBe(true);
+
+      const form = formRow.querySelector('form');
+      expect(form.getAttribute('action')).toBe('/pr/o/r/1/reply');
+      expect(form.querySelector('input[name="comment_id"]').value).toBe('7');
+      expect(form.querySelector('input[name="return_to"]').value).toBe('review');
+      expect(form.querySelector('textarea').value).toBe('@alice\n\n> first line\n> second \\n line\n\n');
+      expect(errors).toEqual([]);
+    });
+
+    it('keeps one reply form open at a time', () => {
+      const { doc } = load(page());
+      clickReply(doc, 0);
+      clickReply(doc, 1);
+
+      const rows = doc.querySelectorAll('.reply-comment-form-row');
+      expect(rows).toHaveLength(1);
+      expect(rows[0].querySelector('input[name="comment_id"]').value).toBe('8');
+    });
+
+    it('removes the form on Cancel and on Escape', () => {
+      const { win, doc } = load(page());
+
+      clickReply(doc, 0);
+      doc.querySelector('.reply-comment-form-row .cancel-inline-comment').click();
+      expect(doc.querySelector('.reply-comment-form-row')).toBeNull();
+
+      clickReply(doc, 0);
+      doc.querySelector('.reply-comment-form-row textarea')
+        .dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      expect(doc.querySelector('.reply-comment-form-row')).toBeNull();
+    });
+  });
 });

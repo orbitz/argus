@@ -492,6 +492,18 @@
     });
   }
 
+  // Decode a comment body carried as JSON in a data attribute. Every reply button uses this
+  // encoding: the diff's thread buttons and the conversation tab's.
+  function decodeCommentBody(el) {
+    const raw = el.getAttribute('data-body');
+    if (!raw) return '';
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return '';
+    }
+  }
+
   // Inline comments
   //
   // The inline comment form is NOT rendered per-line anymore (that baked a <form>/<textarea>
@@ -500,6 +512,7 @@
   // clicked line. There is at most one open form at a time.
   function setupInlineComments() {
     const template = document.getElementById('inline-comment-form-template');
+    const replyTemplate = document.getElementById('reply-comment-form-template');
 
     // Remove the currently open inline comment form, if any.
     function removeOpenForm() {
@@ -536,6 +549,43 @@
       if (textarea) textarea.focus();
     }
 
+    // Prefill for the reply dialog: mention the author, then quote the comment.
+    function replyPrefill(btn) {
+      const author = btn.getAttribute('data-author');
+      const body = decodeCommentBody(btn);
+      const mention = author ? `@${author}` : '';
+      const quoted = body ? body.split('\n').map(line => `> ${line}`).join('\n') : '';
+      if (mention && quoted) return `${mention}\n\n${quoted}\n\n`;
+      if (mention) return `${mention} `;
+      return quoted ? `${quoted}\n\n` : '';
+    }
+
+    // Build and insert a reply form directly under the comment thread that owns the button.
+    // The thread row can arrive in a lazily fetched diff body, which is why the caller is a
+    // delegated listener rather than a binding made at init.
+    function openReplyFormFor(btn) {
+      if (!replyTemplate) return;
+      const threadRow = btn.closest('tr.comment-thread-row');
+      const commentId = btn.getAttribute('data-comment-id');
+      if (!threadRow || !commentId) return;
+
+      removeOpenForm();
+
+      const fragment = replyTemplate.content.cloneNode(true);
+      const formRow = fragment.querySelector('.inline-comment-form-row');
+      const form = fragment.querySelector('form');
+      form.action = `/pr/${config.owner}/${config.repo}/${config.prNumber}/reply`;
+      form.querySelector('input[name="comment_id"]').value = commentId;
+      form.querySelector('input[name="return_to"]').value = 'review';
+      threadRow.insertAdjacentElement('afterend', formRow);
+
+      const textarea = formRow.querySelector('textarea');
+      if (!textarea) return;
+      textarea.value = replyPrefill(btn);
+      textarea.focus();
+      textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+    }
+
     diffContainer.addEventListener('click', (e) => {
       const btn = e.target.closest('.line-comment-btn');
       if (!btn) return;
@@ -543,6 +593,15 @@
 
       const lineRow = btn.closest('.diff-line');
       if (lineRow) openFormForLine(lineRow);
+    });
+
+    // Reply buttons inside an inline comment thread. `data-comment-id` is what tells them
+    // apart from the conversation tab's buttons, which fill the timeline form instead.
+    diffContainer.addEventListener('click', (e) => {
+      const btn = e.target.closest('.reply-to-comment[data-comment-id]');
+      if (!btn) return;
+      e.preventDefault();
+      openReplyFormFor(btn);
     });
 
     // Handle cancel buttons (the form is removed entirely).
@@ -599,9 +658,11 @@
     }
   }
 
-  // Reply to comments
+  // Reply buttons on the conversation tab, which fill the timeline's "Add a comment" box.
+  // The diff's thread buttons carry `data-comment-id` and are handled in setupInlineComments,
+  // because a lazily injected diff body arrives after init().
   function setupReplyButtons() {
-    const replyButtons = document.querySelectorAll('.reply-to-comment');
+    const replyButtons = document.querySelectorAll('.reply-to-comment:not([data-comment-id])');
     const commentForm = document.querySelector('.pr-comment-form textarea[name="body"]');
 
     if (!commentForm) return;
@@ -609,14 +670,14 @@
     replyButtons.forEach(button => {
       button.addEventListener('click', (e) => {
         const author = button.getAttribute('data-author');
-        const body = button.getAttribute('data-body');
+        const body = decodeCommentBody(button);
         const shouldQuote = button.getAttribute('data-quote') === 'true';
 
         let replyText;
 
         if (shouldQuote && body) {
           // Create quoted reply
-          const quotedLines = body.split('\\n').map(line => `> ${line}`).join('\n');
+          const quotedLines = body.split('\n').map(line => `> ${line}`).join('\n');
           replyText = `@${author}\n\n${quotedLines}\n\n`;
         } else {
           // Simple mention reply

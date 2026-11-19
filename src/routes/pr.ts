@@ -30,7 +30,7 @@ import { invalidateCache, prCacheKeys, getFetchedAt, type CacheMode } from '../l
 import { summarizeChecks } from '../lib/checks.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
-import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
+import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderReplyCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
 import { renderMarkdown, inlineRelativeImages, escapeHtml } from '../lib/markdown.js';
 import { expandRenamedFile, type SplitSourceFile } from '../lib/rename-split.js';
 import { startCounters } from '../lib/perf-counters.js';
@@ -668,6 +668,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           fetchedAt,
           dataFetchedAt,
           inlineCommentFormTemplate: renderInlineCommentForm(),
+          replyCommentFormTemplate: renderReplyCommentForm(),
           pollIntervalMs: config.ui.pollIntervalMs,
           config,
           reviewedFiles,
@@ -932,14 +933,14 @@ export async function prRoutes(fastify: FastifyInstance) {
     async (
       request: FastifyRequest<{
         Params: PRParams;
-        Body: { comment_id: string; body: string };
+        Body: { comment_id: string; body: string; return_to?: string };
       }>,
       reply: FastifyReply
     ) => {
       if (!requireAuth(request, reply)) return;
 
       const { owner, repo, number } = request.params;
-      const { comment_id, body } = request.body;
+      const { comment_id, body, return_to } = request.body;
       const prNumber = parseInt(number, 10);
       const commentId = parseInt(comment_id, 10);
 
@@ -953,7 +954,7 @@ export async function prRoutes(fastify: FastifyInstance) {
 
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
-        await replyToReviewComment(
+        const newCommentId = await replyToReviewComment(
           octokit,
           owner,
           repo,
@@ -963,6 +964,13 @@ export async function prRoutes(fastify: FastifyInstance) {
         );
         invalidateCache(prCacheKeys(owner, repo, prNumber));
 
+        // A reply written in the diff returns to the diff, anchored on the new comment, so the
+        // reader sees what they wrote. The diff's reply form sends return_to=review.
+        if (return_to === 'review') {
+          return reply.redirect(
+            `/pr/${owner}/${repo}/${number}?tab=review#comment-${newCommentId}`
+          );
+        }
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=conversation`);
       } catch (err: any) {
         console.error('Error replying to comment:', err);
@@ -1183,12 +1191,23 @@ export async function prRoutes(fastify: FastifyInstance) {
           enableHighlighting = prefRows[0].preference_value === '1';
         }
 
+        // Inline comments for this file. Read before the cache lookup: a cached table is
+        // comment-free by construction, so it may only be served while the file still has no
+        // comments. A reply added after the row was written changes neither head_sha nor
+        // diff_cache, so an unconditional hit would hide that comment until the row expires.
+        const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
+        const fileComments = await Promise.all(
+          reviewComments
+            .filter(c => c.path === filePath)
+            .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
+        );
+
         // The diff_cache stores the standard (whitespace-included) render keyed by head SHA +
         // path, so it is only valid for the non-whitespace view — skip it entirely for ?w=1.
-        if (!hideWhitespace) {
-          // Serve cached rendered HTML when present. Only comment-less renders are cached, so a
-          // cache hit is always comment-free and safe (inline comments can change without the
-          // head SHA changing — see the write below).
+        // A hit is also skipped when the file carries comments now, even though only
+        // comment-less renders are written.
+        if (!hideWhitespace && fileComments.length === 0) {
+          // Serve cached rendered HTML when present.
           const cached = query<{ rendered_html: string | null }>(
             `SELECT rendered_html FROM diff_cache
              WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
@@ -1245,14 +1264,6 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
           return reply.send({ html: '<div class="diff-binary-notice">Binary file not shown</div>' });
         }
-
-        // Inline comments for this file.
-        const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
-        const fileComments = await Promise.all(
-          reviewComments
-            .filter(c => c.path === filePath)
-            .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
-        );
 
         // The file's real contents, so constructs closed in an elided region still close.
         // Best-effort: without it renderFile highlights each hunk in isolation.
