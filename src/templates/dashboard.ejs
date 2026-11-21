@@ -312,9 +312,13 @@
                 <% } %>
               <% } %>
               <% if (!isIssue && typeof item.reviewedFiles === 'number' && item.changedFiles > 0 && item.reviewedFiles > 0) {
+                   // A moved file is two reviewable cards, so the review count can pass
+                   // GitHub's changed-file count. The badge shows the file count, never
+                   // a ratio above it.
+                   const badgeCount = Math.min(item.reviewedFiles, item.changedFiles);
                    const done = item.reviewedFiles >= item.changedFiles; %>
                 <span class="badge progress <%= done ? 'complete' : '' %>"
-                      title="You have marked <%= item.reviewedFiles %> of <%= item.changedFiles %> files reviewed"><%= item.reviewedFiles %>/<%= item.changedFiles %></span>
+                      title="You have marked <%= badgeCount %> of <%= item.changedFiles %> files reviewed"><%= badgeCount %>/<%= item.changedFiles %></span>
               <% } %>
             </span>
             <% if (item.changedFiles > 0) { %>

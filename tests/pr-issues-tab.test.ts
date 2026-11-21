@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
  * Rendering, not just compiling. tests/templates.test.ts proves pr.ejs parses; this proves
  * the Issues tab it now carries produces the rows a reader is meant to see, including the
  * cases that only appear on a bad day — an issue in another repository, and one the token
- * could not read.
+ * could not read. It also holds the PR header, so it proves the link out to github.com.
  */
 
 const TEMPLATE = join(
@@ -53,6 +53,7 @@ function viewData(referencedIssues: unknown[]) {
       labels: [],
     },
     files: [],
+    fileCount: 0,
     fileTreeHtml: '',
     lazyDiffs: false,
     commentFiles: {},
@@ -77,6 +78,7 @@ function viewData(referencedIssues: unknown[]) {
     fetchedAt: '2026-01-01T00:00:00Z',
     dataFetchedAt: '2026-01-01T00:00:00Z',
     inlineCommentFormTemplate: '',
+    replyCommentFormTemplate: '',
     pollIntervalMs: 30000,
     config: { ui: { pollIntervalMs: 30000 } },
     reviewedFiles: [],
@@ -107,6 +109,15 @@ const issue = (over: Record<string, unknown> = {}) => ({
   isPullRequest: false,
   error: null,
   ...over,
+});
+
+describe('the link out to github.com', () => {
+  it('is the plain PR address, with no proxy escape hatch on it', () => {
+    const doc = render([]);
+    const link = doc.querySelector('a.github-pr-link') as HTMLAnchorElement;
+    expect(link).not.toBeNull();
+    expect(link.getAttribute('href')).toBe('https://github.com/orbitz/argus/pull/42');
+  });
 });
 
 describe('the Issues tab', () => {

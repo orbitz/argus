@@ -190,6 +190,17 @@ describe('the dashboard pull-request row', () => {
     expect(title.querySelector('.badge.progress')!.textContent).toBe('2/3');
   });
 
+  it('caps the progress badge at the changed-file count', () => {
+    // A moved file is two reviewable cards, so the review count can pass GitHub's
+    // changed-file count. The badge must never show a ratio above the file count.
+    const doc = render({
+      waiting: { total: 1, humans: [pull({ reviewedFiles: 5 })], bots: [] },
+    });
+    const badge = waitingRow(doc).querySelector('.badge.progress')!;
+    expect(badge.textContent).toBe('3/3');
+    expect(badge.classList.contains('complete')).toBe(true);
+  });
+
   it('leaves no diffstat cell for a pull request with no changes', () => {
     const doc = render({
       waiting: { total: 1, humans: [pull({ changedFiles: 0, additions: 0, deletions: 0 })], bots: [] },

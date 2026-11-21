@@ -23,7 +23,15 @@ const activeProcesses = new Set<ChildProcess>();
 
 // Cache for computeCrossDiff results (keyed by owner/repo:fromSha..toSha:flags)
 interface CrossDiffCacheEntry {
-  data: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string }>;
+  data: Array<{
+    filename: string;
+    status: string;
+    additions: number;
+    deletions: number;
+    /** The path before a move; column 1 of `--name-status` for renamed entries. */
+    previous_filename?: string;
+    patch?: string;
+  }>;
   lastAccessed: number;
 }
 
@@ -555,6 +563,19 @@ export async function getFullContextPatches(
  * Compute a two-dot diff between two commits, returning file-level patches
  * similar to GitHub's PRFile format.
  */
+/**
+ * numstat prints a rename as a `pre => post` shorthand (optionally collapsed to
+ * `dir/{pre => post}.ext`), which is not the plain new path splitDiffByFile keys
+ * patches on — without normalizing, rename stats miss and fall back to 0/0.
+ */
+function numstatPathKey(pathField: string): string {
+  const brace = pathField.match(/^(.*)\{(.*) => (.*)\}(.*)$/);
+  if (brace) return `${brace[1]}${brace[3]}${brace[4]}`;
+  const arrow = pathField.indexOf(' => ');
+  if (arrow !== -1) return pathField.slice(arrow + 4);
+  return pathField;
+}
+
 export async function computeCrossDiff(
   owner: string,
   repo: string,
@@ -567,6 +588,8 @@ export async function computeCrossDiff(
   status: string;
   additions: number;
   deletions: number;
+  /** The path before a move; column 1 of `--name-status` for renamed entries. */
+  previous_filename?: string;
   patch?: string;
 }>> {
   const cacheKey = `${owner}/${repo}:${fromSha}..${toSha}:${options?.ignoreWhitespace ? 'w' : ''}`;
@@ -609,12 +632,16 @@ export async function computeCrossDiff(
     token
   );
 
-  // Parse name-status into a map
+  // Parse name-status into a map. Renames report the old path in column 1
+  // (`R100\told\tnew`) — the only place the git path learns where the file
+  // came from — so it is recorded alongside the status.
   const statusMap = new Map<string, string>();
+  const previousMap = new Map<string, string>();
   for (const line of statusResult.stdout.trim().split('\n')) {
     if (!line) continue;
     const parts = line.split('\t');
     const statusChar = parts[0][0]; // R100 -> R
+    const isRename = parts.length > 2 && statusChar === 'R';
     const filename = parts.length > 2 ? parts[2] : parts[1]; // renamed: use new name
     const statusName =
       statusChar === 'A' ? 'added' :
@@ -623,6 +650,7 @@ export async function computeCrossDiff(
       statusChar === 'C' ? 'copied' :
       'modified';
     statusMap.set(filename, statusName);
+    if (isRename) previousMap.set(filename, parts[1]);
   }
 
   // Parse numstat for additions/deletions
@@ -632,8 +660,7 @@ export async function computeCrossDiff(
     const parts = line.split('\t');
     const additions = parts[0] === '-' ? 0 : parseInt(parts[0], 10);
     const deletions = parts[1] === '-' ? 0 : parseInt(parts[1], 10);
-    const filename = parts[2];
-    statsMap.set(filename, { additions, deletions });
+    statsMap.set(numstatPathKey(parts[2]), { additions, deletions });
   }
 
   // Split full diff into per-file patches
@@ -642,6 +669,8 @@ export async function computeCrossDiff(
     status: string;
     additions: number;
     deletions: number;
+    /** The path before a move; column 1 of `--name-status` for renamed entries. */
+    previous_filename?: string;
     patch?: string;
   }> = [];
 
@@ -653,6 +682,7 @@ export async function computeCrossDiff(
       status: statusMap.get(filename) || 'modified',
       additions: stats.additions,
       deletions: stats.deletions,
+      previous_filename: previousMap.get(filename),
       patch,
     });
   }
@@ -783,6 +813,8 @@ export async function computeCrossRevisionDiff(
   status: string;
   additions: number;
   deletions: number;
+  /** The path before a move; column 1 of `--name-status` for renamed entries. */
+  previous_filename?: string;
   patch?: string;
 }>> {
   // If merge bases are the same, no base branch changes to exclude

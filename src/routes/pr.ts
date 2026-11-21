@@ -30,8 +30,9 @@ import { invalidateCache, prCacheKeys, getFetchedAt, type CacheMode } from '../l
 import { summarizeChecks } from '../lib/checks.js';
 import { query, getDb } from '../db/index.js';
 import { parsePatch, DiffFile, parseHunkString } from '../lib/diff-parser.js';
-import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
-import { renderMarkdown, inlineRelativeImages } from '../lib/markdown.js';
+import { renderFile, renderFileShell, renderFileSidebarItem, renderInlineCommentForm, renderReplyCommentForm, renderSimpleHunk, renderDirectoryTree, fileSlug, wrapCachedFileTable, extractDiffTable, sourcesFromFullContextPatch, type FileSources } from '../lib/diff-renderer.js';
+import { renderMarkdown, inlineRelativeImages, escapeHtml } from '../lib/markdown.js';
+import { expandRenamedFile, type SplitSourceFile } from '../lib/rename-split.js';
 import { startCounters } from '../lib/perf-counters.js';
 import { renderAsciidoc } from '../lib/asciidoc.js';
 import { config } from '../config.js';
@@ -177,11 +178,17 @@ export async function prRoutes(fastify: FastifyInstance) {
           if (path) commentFiles[comment.id] = fileSlug(path);
         }
 
-        // Build map of filename → blob SHA for cross-revision review persistence
+        // Build map of filename → blob SHA for cross-revision review persistence.
+        // A moved file has two cards but one GitHub record, so the path that left gets
+        // the moved blob's SHA too — without it the delete card's review could never
+        // survive a reload (the files list has no entry for the old path).
         const fileShaMap = new Map<string, string>();
         for (const file of files) {
           if (file.sha) {
             fileShaMap.set(file.filename, file.sha);
+            if (file.previous_filename) {
+              fileShaMap.set(file.previous_filename, file.sha);
+            }
           }
         }
 
@@ -234,7 +241,7 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Historical revision view
         let isHistoricalView = false;
         let selectedRevisionId: number | null = null;
-        let historicalFiles: Array<{ filename: string; status: string; additions: number; deletions: number; patch?: string; sha?: string }> = files;
+        let historicalFiles: SplitSourceFile[] = files;
 
         // Cross-revision comparison view
         let isCrossRevisionView = false;
@@ -336,7 +343,11 @@ export async function prRoutes(fastify: FastifyInstance) {
           commentCount: number;
         }> = [];
 
-        const filesToRender = (isHistoricalView || isCrossRevisionView || hideWhitespace) ? historicalFiles : files;
+        // A move renders as two cards — a delete at the old path and an add at the
+        // new. expandRenamedFile does the split once, for this list.
+        const sourceFiles: SplitSourceFile[] =
+          (isHistoricalView || isCrossRevisionView || hideWhitespace) ? historicalFiles : files;
+        const filesToRender = sourceFiles.flatMap(expandRenamedFile);
 
         // For very large PRs, render lightweight file shells and load each file's diff body
         // lazily on expand (see /file-diff endpoint and public/js/pr.js). Supported for the
@@ -435,7 +446,8 @@ export async function prRoutes(fastify: FastifyInstance) {
           const fileComments = (isHistoricalView || isCrossRevisionView) ? [] : (commentsByFile.get(file.filename) || []);
 
           if (!file.patch) {
-            // Binary file or no changes
+            // Binary file, no changes, or — with movedTo/movedFrom set — the patchless
+            // half of a move.
             const diffFile: DiffFile = {
               oldPath: file.filename,
               newPath: file.filename,
@@ -444,6 +456,8 @@ export async function prRoutes(fastify: FastifyInstance) {
               additions: file.additions,
               deletions: file.deletions,
               isBinary: true,
+              movedTo: file.movedTo,
+              movedFrom: file.movedFrom,
             };
 
             const slug = fileSlug(file.filename);
@@ -460,6 +474,11 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
 
           const parsedFile = parsePatch(file.patch, file.filename, file.status);
+          // Thread the move cross-link onto the parsed card: a rename with content
+          // keeps its patch, and its header must show where the file came from.
+          // (movedTo cannot occur here — expandRenamedFile strips the patch from the
+          // delete card.)
+          parsedFile.movedFrom = file.movedFrom;
 
           const slug = fileSlug(file.filename);
           const fileSha = file.sha || fileShaMap.get(file.filename) || '';
@@ -539,6 +558,11 @@ export async function prRoutes(fastify: FastifyInstance) {
         // Build directory tree from files
         const fileTree = buildFileTree(parsedFiles);
         const fileTreeHtml = renderDirectoryTree(fileTree);
+
+        // Every rendered card carries a review checkbox — both halves of a move
+        // included — so the denominator is the card count. The client recomputes it
+        // from the checkboxes, and the two must agree.
+        const fileCount = parsedFiles.length;
 
         // Compute line stats for review progress
         let totalLines = 0;
@@ -644,6 +668,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           fetchedAt,
           dataFetchedAt,
           inlineCommentFormTemplate: renderInlineCommentForm(),
+          replyCommentFormTemplate: renderReplyCommentForm(),
           pollIntervalMs: config.ui.pollIntervalMs,
           config,
           reviewedFiles,
@@ -651,6 +676,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           reviewedCommitsSet,
           totalLines,
           reviewedLines,
+          fileCount,
           activeTab,
           hideWhitespace,
         };
@@ -907,14 +933,14 @@ export async function prRoutes(fastify: FastifyInstance) {
     async (
       request: FastifyRequest<{
         Params: PRParams;
-        Body: { comment_id: string; body: string };
+        Body: { comment_id: string; body: string; return_to?: string };
       }>,
       reply: FastifyReply
     ) => {
       if (!requireAuth(request, reply)) return;
 
       const { owner, repo, number } = request.params;
-      const { comment_id, body } = request.body;
+      const { comment_id, body, return_to } = request.body;
       const prNumber = parseInt(number, 10);
       const commentId = parseInt(comment_id, 10);
 
@@ -928,7 +954,7 @@ export async function prRoutes(fastify: FastifyInstance) {
 
       try {
         const octokit = createUserOctokit(request.user!.accessToken);
-        await replyToReviewComment(
+        const newCommentId = await replyToReviewComment(
           octokit,
           owner,
           repo,
@@ -938,6 +964,13 @@ export async function prRoutes(fastify: FastifyInstance) {
         );
         invalidateCache(prCacheKeys(owner, repo, prNumber));
 
+        // A reply written in the diff returns to the diff, anchored on the new comment, so the
+        // reader sees what they wrote. The diff's reply form sends return_to=review.
+        if (return_to === 'review') {
+          return reply.redirect(
+            `/pr/${owner}/${repo}/${number}?tab=review#comment-${newCommentId}`
+          );
+        }
         return reply.redirect(`/pr/${owner}/${repo}/${number}?tab=conversation`);
       } catch (err: any) {
         console.error('Error replying to comment:', err);
@@ -1158,12 +1191,23 @@ export async function prRoutes(fastify: FastifyInstance) {
           enableHighlighting = prefRows[0].preference_value === '1';
         }
 
+        // Inline comments for this file. Read before the cache lookup: a cached table is
+        // comment-free by construction, so it may only be served while the file still has no
+        // comments. A reply added after the row was written changes neither head_sha nor
+        // diff_cache, so an unconditional hit would hide that comment until the row expires.
+        const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
+        const fileComments = await Promise.all(
+          reviewComments
+            .filter(c => c.path === filePath)
+            .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
+        );
+
         // The diff_cache stores the standard (whitespace-included) render keyed by head SHA +
         // path, so it is only valid for the non-whitespace view — skip it entirely for ?w=1.
-        if (!hideWhitespace) {
-          // Serve cached rendered HTML when present. Only comment-less renders are cached, so a
-          // cache hit is always comment-free and safe (inline comments can change without the
-          // head SHA changing — see the write below).
+        // A hit is also skipped when the file carries comments now, even though only
+        // comment-less renders are written.
+        if (!hideWhitespace && fileComments.length === 0) {
+          // Serve cached rendered HTML when present.
           const cached = query<{ rendered_html: string | null }>(
             `SELECT rendered_html FROM diff_cache
              WHERE owner = ? AND repo = ? AND head_sha = ? AND file_path = ?
@@ -1179,6 +1223,7 @@ export async function prRoutes(fastify: FastifyInstance) {
         let patch: string | undefined;
         let status: string;
         let fileSha: string;
+        let previousPath: string | undefined;
         if (hideWhitespace) {
           // Whitespace-ignored diff via the git cache. computeCrossDiff memoises the full
           // cross-diff in-process, so this reuses the work the page render already did.
@@ -1194,6 +1239,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
           patch = wFile.patch;
           status = wFile.status;
+          previousPath = wFile.previous_filename;
           fileSha = '';
         } else {
           const files = await fetchPRFiles(octokit, owner, repo, prNumber);
@@ -1203,19 +1249,21 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
           patch = file.patch;
           status = file.status;
+          previousPath = file.previous_filename;
           fileSha = file.sha || '';
         }
         if (!patch) {
+          // No patch is binary for most files — but a renamed entry without one is a
+          // move (a pure rename, or -w stripping the hunks off a rename-with-changes).
+          // The status was captured above; show the move, not a false binary label (D9).
+          if (status === 'renamed') {
+            const moved = previousPath
+              ? `File moved from ${escapeHtml(previousPath)}`
+              : 'File moved';
+            return reply.send({ html: `<div class="diff-rename-notice">${moved}</div>` });
+          }
           return reply.send({ html: '<div class="diff-binary-notice">Binary file not shown</div>' });
         }
-
-        // Inline comments for this file.
-        const reviewComments = await fetchReviewComments(octokit, owner, repo, prNumber);
-        const fileComments = await Promise.all(
-          reviewComments
-            .filter(c => c.path === filePath)
-            .map(async (c) => ({ ...c, renderedBody: await renderMarkdown(c.body) }))
-        );
 
         // The file's real contents, so constructs closed in an elided region still close.
         // Best-effort: without it renderFile highlights each hunk in isolation.
@@ -1297,16 +1345,29 @@ export async function prRoutes(fastify: FastifyInstance) {
           owner, repo, pr.base.sha, pr.head.sha, request.user.accessToken
         );
 
-        // Fetch review comments and full file diff in parallel
-        const [patch, reviewComments] = await Promise.all([
+        // Fetch review comments, full file diff and the file's real status in parallel.
+        // The status used to be hardcoded to 'modified'; the PR file list is
+        // ETag-cached, so this costs nothing extra on a repeat load.
+        const [patch, reviewComments, prFiles] = await Promise.all([
           getFullFileDiff(
             owner, repo, mergeBase, pr.head.sha, filePath, request.user.accessToken,
             hideWhitespace ? { ignoreWhitespace: true } : undefined
           ),
           fetchReviewComments(octokit, owner, repo, prNumber),
+          fetchPRFiles(octokit, owner, repo, prNumber),
         ]);
 
+        const prFile = prFiles.find(f => f.filename === filePath);
+
         if (!patch) {
+          // Pathspec limiting runs before rename pairing, so a pure move yields no
+          // patch at all — show the move rather than a bare "No changes" (D7 scope).
+          if (prFile?.status === 'renamed') {
+            const moved = prFile.previous_filename
+              ? `File moved from ${escapeHtml(prFile.previous_filename)}`
+              : 'File moved';
+            return reply.send({ html: `<div class="diff-rename-notice">${moved}</div>` });
+          }
           return reply.send({ html: '<div class="diff-empty-notice">No changes</div>' });
         }
 
@@ -1330,7 +1391,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           enableHighlighting = prefRows[0].preference_value === '1';
         }
 
-        const parsedFile = parsePatch(patch, filePath, 'modified');
+        const parsedFile = parsePatch(patch, filePath, prFile?.status ?? 'modified');
         const slug = fileSlug(filePath);
         // This patch is already -U99999, so it *is* the whole file — no second git call.
         const sources = sourcesFromFullContextPatch(patch) || undefined;
@@ -1474,25 +1535,16 @@ export async function prRoutes(fastify: FastifyInstance) {
         const octokit = createUserOctokit(request.user!.accessToken);
         const comparison = await compareCommits(octokit, owner, repo, base, head);
 
-        // Parse and render diffs
-        const parsedFiles = comparison.files.map((file, i) => {
-          if (!file.patch) {
-            return {
-              path: file.filename,
-              status: file.status,
-              additions: file.additions,
-              deletions: file.deletions,
-              patch: null,
-            };
-          }
-          return {
-            path: file.filename,
-            status: file.status,
-            additions: file.additions,
-            deletions: file.deletions,
-            patch: file.patch,
-          };
-        });
+        // A move shows as delete + add here too, through the same helper (D1).
+        const parsedFiles = comparison.files.flatMap(expandRenamedFile).map((file) => ({
+          path: file.filename,
+          status: file.status,
+          additions: file.additions,
+          deletions: file.deletions,
+          patch: file.patch ?? null,
+          movedTo: file.movedTo,
+          movedFrom: file.movedFrom,
+        }));
 
         return reply.view('compare', {
           title: `${base.slice(0, 7)}..${head.slice(0, 7)} - Argus`,
@@ -1697,11 +1749,13 @@ export async function prRoutes(fastify: FastifyInstance) {
           renderedHtml: string;
         }> = [];
 
-        for (let i = 0; i < commit.files.length; i++) {
-          const file = commit.files[i];
-
+        // A commit that moves a file shows the same delete + add split as the PR page,
+        // through the same helper (D1).
+        for (const file of commit.files.flatMap(expandRenamedFile)) {
           if (!file.patch) {
-            // Binary file or no changes
+            // Binary file, no changes, or — with movedTo/movedFrom set — the patchless
+            // half of a move (notice branch renders it; isBinary stays legacy true as
+            // on the PR page).
             const diffFile: DiffFile = {
               oldPath: file.filename,
               newPath: file.filename,
@@ -1710,6 +1764,8 @@ export async function prRoutes(fastify: FastifyInstance) {
               additions: file.additions,
               deletions: file.deletions,
               isBinary: true,
+              movedTo: file.movedTo,
+              movedFrom: file.movedFrom,
             };
 
             parsedFiles.push({
@@ -1721,6 +1777,7 @@ export async function prRoutes(fastify: FastifyInstance) {
           }
 
           const parsedFile = parsePatch(file.patch, file.filename, file.status);
+          parsedFile.movedFrom = file.movedFrom;
 
           parsedFiles.push({
             file: parsedFile,

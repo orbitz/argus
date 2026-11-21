@@ -135,8 +135,9 @@ across. GitHub-only options like `?diff=split` are dropped.
 
 ### Reaching the real page
 
-Append `?argus=0` to any URL to bypass Argus for that request. The "View on GitHub" link on
-every Argus PR page already carries it.
+Append `?argus=0` to any URL to bypass Argus for that request. Argus adds it nowhere — its
+links out to github.com stay clean — so a page behind this proxy links back into Argus, and
+the flag goes on by hand when you want the real page.
 
 ### Changing the split
 

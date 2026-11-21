@@ -104,8 +104,8 @@
         <details class="diff-file">
           <summary class="file-header">
             <span>
-              <span class="status-badge <%= f.status === 'added' ? 'badge-added' : f.status === 'removed' ? 'badge-deleted' : 'badge-modified' %>">
-                <%= f.status === 'added' ? 'A' : f.status === 'removed' ? 'D' : 'M' %>
+              <span class="status-badge <%= f.status === 'added' ? 'badge-added' : f.status === 'removed' || f.status === 'deleted' ? 'badge-deleted' : 'badge-modified' %>">
+                <%= f.status === 'added' ? 'A' : f.status === 'removed' || f.status === 'deleted' ? 'D' : 'M' %>
               </span>
               <%= f.path %>
             </span>
@@ -124,6 +124,8 @@
 <% }
               }) %></pre>
             </div>
+          <% } else if (f.movedTo || f.movedFrom) { %>
+            <div class="diff-rename-notice"><%= f.movedTo ? `File moved to ${f.movedTo}` : `File moved from ${f.movedFrom}` %></div>
           <% } else { %>
             <div class="diff-binary-notice">Binary file or no changes</div>
           <% } %>

@@ -316,7 +316,11 @@ function injectOrphanedCommentHunks(
 const STATUS_BADGES: Record<string, { class: string; text: string }> = {
   added: { class: 'badge-added', text: 'A' },
   deleted: { class: 'badge-deleted', text: 'D' },
+  // GitHub's diff-entry enum sends `removed`/`changed`, never `deleted` — without
+  // these aliases a genuinely deleted file fell through to the M badge.
+  removed: { class: 'badge-deleted', text: 'D' },
   modified: { class: 'badge-modified', text: 'M' },
+  changed: { class: 'badge-modified', text: 'M' },
   renamed: { class: 'badge-renamed', text: 'R' },
 };
 
@@ -391,6 +395,17 @@ function buildNormalFileChrome(
     </span>
   `;
 
+  // The cross-link of a moved card appears exactly once: here when the body is a
+  // table, in the body notice otherwise (renderFile's move-notice branch).
+  const movedNote =
+    file.hunks.length === 0
+      ? ''
+      : file.movedTo
+        ? `<span class="file-moved-note" title="File moved"> → ${escapeHtml(file.movedTo)}</span>`
+        : file.movedFrom
+          ? `<span class="file-moved-note" title="File moved"> ← ${escapeHtml(file.movedFrom)}</span>`
+          : '';
+
   const attrs = `class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-sha="${headSha}" data-additions="${file.additions}" data-deletions="${file.deletions}"`;
 
   const summary = `
@@ -400,7 +415,7 @@ function buildNormalFileChrome(
           <a class="file-path file-deep-link" href="#file-${fileId}" onclick="event.stopPropagation()" style="text-decoration: none; color: inherit;">
             <span class="file-directory">${escapeHtml(directory)}</span>
             <span class="file-name">${escapeHtml(filename)}</span>
-          </a>
+          </a>${movedNote}
         </span>
         <span class="file-stats">${statsHtml}${syntaxToggle}${fullFileCheckbox}${renderedCheckbox}${reviewCheckbox}</span>
       </summary>`;
@@ -497,6 +512,40 @@ export async function renderFile(
       <label for="file-reviewed-${fileId}">Reviewed</label>
     </span>
   `;
+
+  // A card produced by the rename split shows the move instead of content. The
+  // cross-link appears exactly once per card: in this body notice when there is no
+  // table below, in the header otherwise (buildNormalFileChrome). Both halves carry
+  // the review checkbox: a moved file is walked with the same n/p/r hotkeys as any
+  // other card, so neither half may be a dead end.
+  const isMoveNotice = Boolean(file.movedTo) || (Boolean(file.movedFrom) && file.hunks.length === 0);
+  if (isMoveNotice) {
+    const notice = file.movedTo
+      ? `<div class="diff-rename-notice">File moved to ${escapeHtml(file.movedTo)}</div>`
+      : `<div class="diff-rename-notice">File moved from ${escapeHtml(file.movedFrom ?? path)}</div>`;
+    // Computed here rather than reusing statsHtml: the legacy synthetic branches
+    // construct moved cards with isBinary: true, and the binary-gated statsHtml
+    // would then print a "Binary" chip on a card whose stats are 0/0.
+    const moveStats = `<span class="file-stat additions">+${file.additions}</span>
+       <span class="file-stat deletions">-${file.deletions}</span>`;
+    // No syntax toggle: there is no content here to highlight.
+    return `
+      <details class="diff-file ${isReviewed ? 'file-reviewed' : ''}" data-file-id="${fileId}" data-path="${escapeHtml(path)}" data-additions="${file.additions}" data-deletions="${file.deletions}" ${isReviewed ? '' : 'open'}>
+        <summary class="file-header" id="file-${fileId}">
+          <span class="file-header-info">
+            <span class="status-badge ${badge.class}">${badge.text}</span>
+            <span class="file-path">
+              <span class="file-directory">${escapeHtml(directory)}</span>
+              <span class="file-name">${escapeHtml(filename)}</span>
+            </span>
+          </span>
+          <span class="file-stats">${moveStats}${reviewCheckbox}</span>
+        </summary>
+        <div class="diff-content">
+          ${notice}
+        </div>
+      </details>`;
+  }
 
   // Binary file
   if (file.isBinary) {
@@ -672,6 +721,38 @@ export function renderInlineCommentForm(): string {
     </template>`;
 }
 
+// Reply form template: cloned by the diff's reply handler under the clicked comment thread.
+// Separate from the inline-comment template because a reply needs a comment id and a return
+// tab, not a path/line/side/commit. It carries the shared `inline-comment-form-row` class so
+// the single-open-form discipline and the unsent-draft guard cover it without a second
+// mechanism.
+export function renderReplyCommentForm(): string {
+  return `
+    <template id="reply-comment-form-template">
+      <tr class="inline-comment-form-row reply-comment-form-row inline-comment-form-js">
+        <td colspan="4">
+          <form class="inline-comment-form reply-form" method="POST">
+            <input type="hidden" name="comment_id" value="">
+            <input type="hidden" name="return_to" value="">
+            <textarea name="body" placeholder="Reply to this comment..." rows="3" required class="comment-textarea"></textarea>
+            <div class="comment-form-actions">
+              <button type="button" class="btn btn-secondary btn-small cancel-inline-comment">Cancel</button>
+              <button type="submit" class="btn btn-primary btn-small">Reply</button>
+            </div>
+          </form>
+        </td>
+      </tr>
+    </template>`;
+}
+
+// Encode a comment body for a data attribute. JSON makes the round trip exact: the browser
+// unescapes the attribute and JSON.parse recovers the original string, so a body holding a
+// literal backslash-n or a quote survives. The old scheme (escape the quotes, turn each
+// newline into a backslash-n pair) could not tell either apart from a real line break.
+function encodeCommentBody(body: string): string {
+  return escapeHtml(JSON.stringify(body));
+}
+
 // Render inline comment thread (for displaying comments inline with diff lines)
 function renderInlineCommentThread(
   comments: Array<{
@@ -688,27 +769,19 @@ function renderInlineCommentThread(
       const date = new Date(comment.created_at);
       const timeAgo = formatTimeAgo(date);
 
-      // Escape body for data attribute (replace quotes and newlines)
-      const escapedBody = comment.body
-        .replace(/"/g, '&quot;')
-        .replace(/\n/g, '\\n');
+      const encodedBody = encodeCommentBody(comment.body);
 
-      // Only show reply buttons on the last comment in the thread
+      // Only show the reply button on the last comment in the thread. It carries the body so
+      // the dialog can quote it. The thread had a second, emoji-labelled button that opened
+      // the same dialog; with the body now on both it did nothing the plain one did not.
       const replyButtons = index === comments.length - 1 ? `
         <div class="inline-comment-actions">
           <button type="button" class="btn btn-small reply-to-comment"
                   data-author="${escapeHtml(comment.user.login)}"
+                  data-body="${encodedBody}"
                   data-comment-id="${comment.id}"
-                  style="padding: 0.375rem 0.5rem; margin-right: 0.25rem;">
-            Reply
-          </button>
-          <button type="button" class="btn btn-small reply-to-comment"
-                  data-author="${escapeHtml(comment.user.login)}"
-                  data-body="${escapedBody}"
-                  data-comment-id="${comment.id}"
-                  data-quote="true"
                   style="padding: 0.375rem 0.5rem;">
-            💬
+            Reply
           </button>
         </div>` : '';
 

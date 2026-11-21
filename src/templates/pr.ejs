@@ -773,7 +773,7 @@
         </div>
         <div style="font-size: 0.8rem; color: var(--fg-muted); line-height: 1.6;">
           <div><span id="review-progress-commits"><%= reviewedCommits.length %></span> / <%= commits.length %> commits</div>
-          <div><span id="review-progress-files"><%= reviewedFiles.length %></span> / <%= files.length %> files</div>
+          <div><span id="review-progress-files"><%= reviewedFiles.length %></span> / <%= fileCount %> files</div>
           <div><span id="review-progress-lines"><%= reviewedLines %></span> / <%= totalLines %> lines</div>
         </div>
       </div>
@@ -811,10 +811,10 @@
           <%= pr.title %>
           <span class="pr-number">
             #<%= pr.number %>
-            <%# ?argus=0 is the escape hatch for the github.com proxy setup (docs/github-proxy.md):
-                without it this link resolves back into Argus. GitHub itself ignores the
-                unknown parameter, so the link is unchanged for everyone else. %>
-            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>?argus=0"
+            <%# A plain github.com link, like every other link out of Argus. Under the
+                github.com proxy (docs/github-proxy.md) it resolves back into Argus; append
+                ?argus=0 by hand when you want the real page. %>
+            <a href="https://github.com/<%= owner %>/<%= repo %>/pull/<%= pr.number %>"
                target="_blank"
                rel="noopener"
                class="github-pr-link"
@@ -870,7 +870,7 @@
         </button>
         <button class="pr-tab <%= activeTab === 'review' ? 'active' : '' %>" data-tab="review">Review
           <span class="tab-pill" title="Commits in this PR"><%= commits.length %> commits</span>
-          <span class="tab-pill" title="Files changed"><%= files.length %> files</span>
+          <span class="tab-pill" title="Files changed"><%= fileCount %> files</span>
         </button>
         <button class="pr-tab <%= activeTab === 'issues' ? 'active' : '' %>" data-tab="issues">Issues
           <% if (referencedIssues.length > 0) { %>
@@ -931,10 +931,10 @@
                       <%- item.data.renderedBody %>
                     </div>
                     <div style="padding: 0 1rem 0.5rem; display: flex; gap: 0.25rem;">
-                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="false">
+                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="false">
                         Reply
                       </button>
-                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
+                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
                         💬
                       </button>
                     </div>
@@ -953,10 +953,10 @@
                         <%- item.data.renderedBody %>
                       </div>
                       <div style="padding: 0 1rem 0.5rem; display: flex; gap: 0.25rem;">
-                        <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="false">
+                        <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="false">
                           Reply
                         </button>
-                        <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
+                        <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
                           💬
                         </button>
                       </div>
@@ -998,10 +998,10 @@
                       <%- item.data.renderedBody %>
                     </div>
                     <div style="padding: 0 1rem 0.5rem; display: flex; gap: 0.25rem;">
-                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="false">
+                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="false">
                         Reply
                       </button>
-                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= item.data.body ? item.data.body.replace(/"/g, '&quot;').replace(/\n/g, '\\n') : '' %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
+                      <button type="button" class="btn btn-small reply-to-comment" data-author="<%= item.data.user.login %>" data-body="<%= JSON.stringify(item.data.body || '') %>" data-quote="true" style="padding: 0.375rem 0.5rem;">
                         💬
                       </button>
                     </div>
@@ -1349,9 +1349,9 @@
           <header class="review-section-header">
             <h2>Files</h2>
             <% if (!isHistoricalView && !isCrossRevisionView) { %>
-              <span class="review-section-count" id="files-section-count"><%= reviewedFiles.length %> / <%= files.length %> reviewed</span>
+              <span class="review-section-count" id="files-section-count"><%= reviewedFiles.length %> / <%= fileCount %> reviewed</span>
             <% } else { %>
-              <span class="review-section-count"><%= files.length %> changed</span>
+              <span class="review-section-count"><%= fileCount %> changed</span>
             <% } %>
           </header>
           <% if (isCrossRevisionView) { %>
@@ -1566,6 +1566,9 @@
   <!-- Inline comment form template -->
   <%- inlineCommentFormTemplate %>
 
+  <!-- Reply form template -->
+  <%- replyCommentFormTemplate %>
+
   <!-- Pass data to JS -->
   <script>
     window.ARGUS_CONFIG = {
@@ -1629,14 +1632,20 @@
       reviewOverlay.classList.add('active');
     });
 
-    cancelReviewBtn.addEventListener('click', () => {
+    function closeReviewForm() {
       reviewForm.classList.remove('active');
       reviewOverlay.classList.remove('active');
-    });
+    }
 
-    reviewOverlay.addEventListener('click', () => {
-      reviewForm.classList.remove('active');
-      reviewOverlay.classList.remove('active');
+    cancelReviewBtn.addEventListener('click', closeReviewForm);
+
+    reviewOverlay.addEventListener('click', closeReviewForm);
+
+    document.addEventListener('keydown', (e) => {
+      if (e.key !== 'Escape') return;
+      if (!reviewForm.classList.contains('active')) return;
+      e.preventDefault();
+      closeReviewForm();
     });
   </script>
   <!-- Go to file modal -->

@@ -197,6 +197,8 @@ export interface IssueComment {
 export interface PRFile {
   sha: string;
   filename: string;
+  /** The path before a move; GitHub sends it only for `status: 'renamed'`. */
+  previous_filename?: string;
   status: string;
   additions: number;
   deletions: number;
@@ -594,7 +596,8 @@ export async function createReviewComment(
   return response.data.id;
 }
 
-// Reply to a review comment
+// Reply to a review comment. Returns the new comment's id so the caller can anchor the
+// reader on it, as createReviewComment already does.
 export async function replyToReviewComment(
   octokit: Octokit,
   owner: string,
@@ -602,14 +605,15 @@ export async function replyToReviewComment(
   prNumber: number,
   commentId: number,
   body: string
-): Promise<void> {
-  await octokit.pulls.createReplyForReviewComment({
+): Promise<number> {
+  const response = await octokit.pulls.createReplyForReviewComment({
     owner,
     repo,
     pull_number: prNumber,
     comment_id: commentId,
     body,
   });
+  return response.data.id;
 }
 
 export interface PRCommit {
@@ -672,6 +676,8 @@ export async function fetchCommit(
   };
   files: Array<{
     filename: string;
+    /** The path before a move; GitHub sends it only for `status: 'renamed'`. */
+    previous_filename?: string;
     status: string;
     additions: number;
     deletions: number;
@@ -693,6 +699,7 @@ export async function fetchCommit(
     },
     files: (response.data.files || []).map(f => ({
       filename: f.filename,
+      previous_filename: f.previous_filename,
       status: f.status,
       additions: f.additions,
       deletions: f.deletions,
