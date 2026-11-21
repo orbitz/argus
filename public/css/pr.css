@@ -797,7 +797,7 @@ a.file-deep-link:hover { text-decoration: underline; }
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
-  max-width: 600px;
+  max-width: 960px;
   width: 90%;
   background: white;
   border-radius: 8px;
